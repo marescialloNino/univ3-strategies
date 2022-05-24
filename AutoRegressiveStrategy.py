@@ -327,12 +327,12 @@ class AutoRegressiveStrategy:
         ## Sanity Checks
         if token_0_limit:
             # If token 0 in limit, make sure lower tick is above active tick
-            if limitLower <= current_strat_obs.price_tick_current:
-                limitLower = current_strat_obs.price_tick_current + current_strat_obs.tickSpacing
+            if limitLower <= current_strat_obs.price_tick:
+                limitLower = current_strat_obs.price_tick + current_strat_obs.tickSpacing
         else:
             # In token 1 in limit, make sure upper tick is below active tick
-            if limitUpper >= current_strat_obs.price_tick_current:
-                limitUpper = current_strat_obs.price_tick_current - current_strat_obs.tickSpacing
+            if limitUpper >= current_strat_obs.price_tick:
+                limitUpper = current_strat_obs.price_tick - current_strat_obs.tickSpacing
         
         # Make sure limitLower < limitUpper. If not make one tick    
         if limitLower >= limitUpper:
