@@ -41,7 +41,7 @@ class StrategyObservation:
         self.compound_point              = False
         self.reset_reason                = ''
         self.decimal_adjustment          = 10**(self.decimals_1  - self.decimals_0)
-        self.tickSpacing                 = int(self.fee_tier*2*10000)   
+        self.tickSpacing                 = int(self.fee_tier*2*10000) if self.fee_tier > (100/1e6) else int(self.fee_tier*10000) # 1bp pool's tick spacing is 1x the fee tier, other pool's 2x
         self.token_0_fees                = 0.0
         self.token_1_fees                = 0.0
         self.simulate_strat              = simulate_strat
