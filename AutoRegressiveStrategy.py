@@ -504,8 +504,8 @@ class AutoRegressiveStrategy:
         current_strat_obs.token_1_fees_uncollected  = 0.0
         
         # Due to price and asset deposit ratio sometimes can't deposit 100% of assets
-        current_strat_obs.token_1_left_over         = max([0.0,unused_token_0 - base_amount_0_placed - limit_amount_0_placed])
-        current_strat_obs.token_0_left_over         = max([0.0,unused_token_1 - base_amount_1_placed - limit_amount_1_placed])
+        current_strat_obs.token_0_left_over         = max([0.0,unused_token_0 - base_amount_0_placed - limit_amount_0_placed])
+        current_strat_obs.token_1_left_over         = max([0.0,unused_token_1 - base_amount_1_placed - limit_amount_1_placed])
         
     
     ########################################################
