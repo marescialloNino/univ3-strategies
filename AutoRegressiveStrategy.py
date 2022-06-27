@@ -137,7 +137,7 @@ class AutoRegressiveStrategy:
         limit_assets_after_compound_token_1 = limit_amount_0_placed * current_strat_obs.price + limit_amount_1_placed + limit_assets_token_1                           
 
         # if assets changed more than 1%
-        if np.abs((base_assets_after_compound_token_1+limit_assets_after_compound_token_1)/(base_assets_token_1 + limit_assets_token_1)) > .01:
+        if ((base_assets_after_compound_token_1+limit_assets_after_compound_token_1)/(base_assets_token_1 + limit_assets_token_1) - 1) > .01:
             return True
         else:
             return False     
