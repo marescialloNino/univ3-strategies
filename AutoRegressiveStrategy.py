@@ -393,21 +393,20 @@ class AutoRegressiveStrategy:
         limitUpper        = int(math.floor(limitUpperPRE/current_strat_obs.tickSpacing)*current_strat_obs.tickSpacing)
         
         ## Sanity Checks
-        if token_0_limit:
-            # If token 0 in limit, make sure lower tick is above active tick
+        if token_0_limit:        
             if limitLower <= current_strat_obs.price_tick_current:
-                limitLower += current_strat_obs.tickSpacing
+                # If token 0 in limit, make sure lower tick is above active tick
+                limitLower = limitLower + current_strat_obs.tickSpacing
             elif (limitLower / current_strat_obs.price_tick_current) < 1.25:
                 # if bottom of limit tick is less than 125% of the current, add one tick space
                 limitLower = limitLower + current_strat_obs.tickSpacing
         else:
             # In token 1 in limit, make sure upper tick is below active tick
-            if limitUpper >=  current_strat_obs.price_tick_current:
-                limitUpper -= current_strat_obs.tickSpacing
+            if limitUpper >= current_strat_obs.price_tick_current:
+                limitUpper = limitUpper - current_strat_obs.tickSpacing
             elif (current_strat_obs.price_tick_current / limitUpper) < 1.25:
                 # if current is less than 125% of top of limit tick, reduce one tick space
-                limitUpper = limitUpper - current_strat_obs.tickSpacing
-                if limit_amount_0*current_strat_obs.price > limit_amount_1:        
+                limitUpper = limitUpper - current_strat_obs.tickSpacing    
         
         # Make sure limitLower < limitUpper. If not make one tick    
         if limitLower >= limitUpper:
