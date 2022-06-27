@@ -88,6 +88,59 @@ class AutoRegressiveStrategy:
             result_dict          = {'return_forecast': return_forecast,
                                     'sd_forecast'    : sd_forecast}            
             return result_dict
+
+        
+    def check_compound_possible(self,current_strat_obs):
+        baseLower  = current_strat_obs.liquidity_ranges[0]['lower_bin_tick']
+        baseUpper  = current_strat_obs.liquidity_ranges[0]['upper_bin_tick']
+        limitLower = current_strat_obs.liquidity_ranges[1]['lower_bin_tick']
+        limitUpper = current_strat_obs.liquidity_ranges[1]['upper_bin_tick']
+        
+        base_assets_token_1  = current_strat_obs.liquidity_ranges[0]['token_0'] * current_strat_obs.price + current_strat_obs.liquidity_ranges[0]['token_1']
+        limit_assets_token_1 = current_strat_obs.liquidity_ranges[0]['token_0'] * current_strat_obs.price + current_strat_obs.liquidity_ranges[0]['token_1']
+        
+        unused_token_0  = current_strat_obs.token_0_left_over + current_strat_obs.token_0_fees_uncollected
+        unused_token_1  = current_strat_obs.token_1_left_over + current_strat_obs.token_1_fees_uncollected
+        #####################################
+        # Add all possible assets to base
+        #####################################
+        liquidity_placed_base   = int(UNI_v3_funcs.get_liquidity(current_strat_obs.price_tick_current,baseLower,baseUpper,unused_token_0, \
+                                                                       unused_token_1,current_strat_obs.decimals_0,current_strat_obs.decimals_1))
+        
+        base_amount_0_placed,base_amount_1_placed   = UNI_v3_funcs.get_amounts(current_strat_obs.price_tick_current,baseLower,baseUpper,liquidity_placed_base\
+                                                                 ,current_strat_obs.decimals_0,current_strat_obs.decimals_1)
+        
+
+        #####################################
+        # Add remaining assets to limit
+        #####################################
+        
+        limit_amount_0 = unused_token_0 - base_amount_0_placed
+        limit_amount_1 = unused_token_1 - base_amount_1_placed
+        
+        token_0_limit  = limit_amount_0*current_strat_obs.price > limit_amount_1
+        # Place single sided highest value
+        if token_0_limit:        
+            # Place Token 0
+            limit_amount_1 = 0.0
+        else:
+            # Place Token 1
+            limit_amount_0 = 0.0
+
+        liquidity_placed_limit                      = int(UNI_v3_funcs.get_liquidity(current_strat_obs.price_tick_current,limitLower,limitUpper, \
+                                                                       limit_amount_0,limit_amount_1,current_strat_obs.decimals_0,current_strat_obs.decimals_1))
+        limit_amount_0_placed,limit_amount_1_placed =     UNI_v3_funcs.get_amounts(current_strat_obs.price_tick_current,limitLower,limitUpper,\
+                                                                     liquidity_placed_limit,current_strat_obs.decimals_0,current_strat_obs.decimals_1)  
+                                                                     
+        
+        base_assets_after_compound_token_1  = base_amount_0_placed  * current_strat_obs.price + base_amount_1_placed + base_assets_token_1                            
+        limit_assets_after_compound_token_1 = limit_amount_0_placed * current_strat_obs.price + limit_amount_1_placed + limit_assets_token_1                           
+
+        # if assets changed more than 1%
+        if np.abs((base_assets_after_compound_token_1+limit_assets_after_compound_token_1)/(base_assets_token_1 + limit_assets_token_1)) > .01:
+            return True
+        else:
+            return False     
         
     #####################################
     # Check if a rebalance is necessary. 
@@ -187,11 +240,26 @@ class AutoRegressiveStrategy:
         
         # If a compound is necessary
         elif  TOKENS_OUTSIDE_LARGE:
-            current_strat_obs.compound_point = True
-            current_strat_obs.reset_reason = 'compound'
-            # Compound position
-            self.compound(current_strat_obs)
-            return current_strat_obs.liquidity_ranges,current_strat_obs.strategy_info
+            
+            if self.check_compound_possible(current_strat_obs):
+                # if price allows for a compound
+                current_strat_obs.compound_point = True
+                current_strat_obs.reset_reason = 'compound'
+                # Compound position
+                self.compound(current_strat_obs)
+                return current_strat_obs.liquidity_ranges,current_strat_obs.strategy_info
+            else:
+                # otherwise rebalance
+                current_strat_obs.reset_point = True
+                current_strat_obs.reset_reason = 'tokens_outside_large'
+
+            
+                # Remove liquidity and claim fees 
+                current_strat_obs.remove_liquidity()
+                
+                # Reset liquidity            
+                liquidity_ranges,strategy_info = self.set_liquidity_ranges(current_strat_obs)
+                return liquidity_ranges,strategy_info
         else:
             return current_strat_obs.liquidity_ranges,current_strat_obs.strategy_info
 
@@ -308,7 +376,7 @@ class AutoRegressiveStrategy:
             limit_range_upper = base_range_upper                     
         else:
             # Place Token 1
-            limit_amount_0    = max([0.0,limit_amount_1])
+            limit_amount_0    = max([0.0,limit_amount_0])
             limit_range_lower = base_range_lower
             limit_range_upper = current_strat_obs.price
         
@@ -327,12 +395,19 @@ class AutoRegressiveStrategy:
         ## Sanity Checks
         if token_0_limit:
             # If token 0 in limit, make sure lower tick is above active tick
-            if limitLower <= current_strat_obs.price_tick:
-                limitLower = current_strat_obs.price_tick + current_strat_obs.tickSpacing
+            if limitLower <= current_strat_obs.price_tick_current:
+                limitLower += current_strat_obs.tickSpacing
+            elif (limitLower / current_strat_obs.price_tick_current) < 1.25:
+                # if bottom of limit tick is less than 125% of the current, add one tick space
+                limitLower = limitLower + current_strat_obs.tickSpacing
         else:
             # In token 1 in limit, make sure upper tick is below active tick
-            if limitUpper >= current_strat_obs.price_tick:
-                limitUpper = current_strat_obs.price_tick - current_strat_obs.tickSpacing
+            if limitUpper >=  current_strat_obs.price_tick_current:
+                limitUpper -= current_strat_obs.tickSpacing
+            elif (current_strat_obs.price_tick_current / limitUpper) < 1.25:
+                # if current is less than 125% of top of limit tick, reduce one tick space
+                limitUpper = limitUpper - current_strat_obs.tickSpacing
+                if limit_amount_0*current_strat_obs.price > limit_amount_1:        
         
         # Make sure limitLower < limitUpper. If not make one tick    
         if limitLower >= limitUpper:

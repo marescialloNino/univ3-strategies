@@ -91,7 +91,7 @@ def get_pool_data_bigquery(contract_address,date_begin,date_end,decimals_0,decim
     
     DECIMAL_ADJ                             = 10**(decimals_1  - decimals_0)
     resulting_data['sqrtPriceX96_float']    = resulting_data['sqrtPriceX96'].astype(float)
-    resulting_data['quotePrice']            = ((resulting_data['sqrtPriceX96_float'] / 2**96) **2) / DECIMAL_ADJ
+    resulting_data['quotePrice']            = (((resulting_data['sqrtPriceX96_float'] / 2**96) **2) / DECIMAL_ADJ).astype(float)
     resulting_data['block_date']            = pd.to_datetime(resulting_data['block_timestamp'])
     resulting_data                          = resulting_data.set_index('block_date',drop=False).sort_index()
 
