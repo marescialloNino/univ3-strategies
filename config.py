@@ -1,1 +1,1 @@
-GOOGLE_SERVICE_AUTH_JSON = r'C:\Users\Z640\dev\univ3-simu\univ3-strategies\auth_jey.json'
+GOOGLE_SERVICE_AUTH_JSON = r'C:\Users\Z640\dev\univ3-simu\univ3-strategies\auth_key.json'
