@@ -157,40 +157,45 @@ class StrategyObservation:
 # the time point, and contains the pool price (token 1 per token 0) 
 ########################################################
 
-def simulate_strategy(price_data,swap_data,strategy_in,
-                       liquidity_in_0,liquidity_in_1,fee_tier,decimals_0,decimals_1):
-
-    strategy_results = []    
-  
-    # Go through every time period in the data that was passet
-    for i in range(len(price_data)): 
-        # Strategy Initialization
+def simulate_strategy(price_data, swap_data, strategy_in, liquidity_in_0, liquidity_in_1, fee_tier, decimals_0, decimals_1):
+    # ... (previous imports and logic)
+    strategy_results = []
+    print(f"price_data shape: {price_data.shape}")
+    print(f"price_data index dtype: {price_data.index.dtype}")
+    
+    for i in range(len(price_data)):
         if i == 0:
-            strategy_results.append(StrategyObservation(price_data.index[i],
-                                              price_data[i],
-                                              strategy_in,
-                                              liquidity_in_0,liquidity_in_1,
-                                              fee_tier,decimals_0,decimals_1))
-        # After initialization
+            strategy_results.append(StrategyObservation(
+                price_data.index[i],
+                price_data.iloc[i],
+                strategy_in,
+                liquidity_in_0, liquidity_in_1,
+                fee_tier, decimals_0, decimals_1,
+                price_data=price_data.iloc[:i+1],  # Pass cumulative data
+                time_data=price_data.index[:i+1]
+            ))
         else:
-            
-            relevant_swaps = swap_data[price_data.index[i-1]:price_data.index[i]]
-            strategy_results.append(StrategyObservation(price_data.index[i],
-                                              price_data[i],
-                                              strategy_in,
-                                              strategy_results[i-1].liquidity_in_0,
-                                              strategy_results[i-1].liquidity_in_1,
-                                              strategy_results[i-1].fee_tier,
-                                              strategy_results[i-1].decimals_0,
-                                              strategy_results[i-1].decimals_1,
-                                              strategy_results[i-1].token_0_left_over,
-                                              strategy_results[i-1].token_1_left_over,
-                                              strategy_results[i-1].token_0_fees_uncollected,
-                                              strategy_results[i-1].token_1_fees_uncollected,
-                                              strategy_results[i-1].liquidity_ranges,
-                                              strategy_results[i-1].strategy_info,
-                                              relevant_swaps))
-            
+            current_strat_obs = copy.deepcopy(strategy_results[-1])
+            current_strat_obs.update_swap_data(
+                price_data.index[i],
+                price_data.iloc[i],
+                swap_data,
+                strategy_in
+            )
+            current_strat_obs.liquidity_ranges, current_strat_obs.strategy_info = strategy_in.check_strategy(
+                current_strat_obs,
+                price_data=price_data.iloc[:i+1],  # Pass cumulative data
+                time_data=price_data.index[:i+1]
+            )
+            strategy_results.append(current_strat_obs)
+        
+        model_forecast = strategy_in.generate_model_forecast(
+            price_data.iloc[:i+1],
+            price_data.index[:i+1]
+        )
+        strategy_results[-1].strategy_info['return_forecast'] = model_forecast['return_forecast']
+        strategy_results[-1].strategy_info['sd_forecast'] = model_forecast['sd_forecast']
+    
     return strategy_results
 
 ########################################################
@@ -246,28 +251,114 @@ def generate_simulation_series(simulations,strategy_in,token_0_usd_data = None):
 ########################################################
 
 def fill_time(data):
-    price_range               = pd.DataFrame({'time_pd': pd.date_range(data.index.min(),data.index.max(),freq='1 min',tz='UTC')})
-    price_range               = price_range.set_index('time_pd')
-    new_data                  = price_range.merge(data,left_index=True,right_index=True,how='left').ffill()    
+    data_copy = data.copy()
+    print(f"Input data index type in fill_time: {type(data_copy.index)}")
+    print(f"Input data index dtype in fill_time: {data_copy.index.dtype}")
+    
+    # Ensure input index is DatetimeIndex with ns precision
+    if not isinstance(data_copy.index, pd.DatetimeIndex):
+        data_copy.index = pd.to_datetime(data_copy.index, utc=True)
+        print("Converted input data index to DatetimeIndex in fill_time")
+    data_copy.index = data_copy.index.astype('datetime64[ns, UTC]')
+    print(f"data_copy index dtype after conversion: {data_copy.index.dtype}")
+    
+    # Create price range with minute frequency
+    price_range = pd.DataFrame(
+        index=pd.date_range(
+            start=data_copy.index.min(),
+            end=data_copy.index.max(),
+            freq='1min',
+            tz='UTC'
+        )
+    )
+    print(f"price_range index type in fill_time: {type(price_range.index)}")
+    print(f"price_range index dtype in fill_time: {price_range.index.dtype}")
+    
+    # Use merge_asof to handle sparse data
+    new_data = pd.merge_asof(
+        price_range,
+        data_copy,
+        left_index=True,
+        right_index=True,
+        direction='backward'
+    ).ffill()
+    
+    print(f"new_data index type in fill_time: {type(new_data.index)}")
+    print(f"new_data index dtype in fill_time: {new_data.index.dtype}")
+    print(f"new_data quotePrice NaN count in fill_time: {new_data['quotePrice'].isna().sum()}")
+    
+    # Ensure output index is DatetimeIndex with ns precision
+    if not isinstance(new_data.index, pd.DatetimeIndex):
+        new_data.index = pd.to_datetime(new_data.index, utc=True)
+        print("Converted new_data index to DatetimeIndex in fill_time")
+    new_data.index = new_data.index.astype('datetime64[ns, UTC]')
+    
     return new_data
 
-def aggregate_price_data(data,frequency):
+def aggregate_price_data(data, frequency):
+    # Normalize frequency to lowercase
+    frequency = frequency.lower()
     
-    if   frequency == 'M':
-            resample_option      = '1 min'
-    elif frequency == 'H':
-            resample_option      = '1H'
-    elif frequency == 'D':
-            resample_option      = '1D'
+    if frequency == 'm':
+        resample_option = '1min'
+        merge_freq = '1min'
+    elif frequency == 'h':
+        resample_option = '1h'
+        merge_freq = '1h'
+    elif frequency == 'd':
+        resample_option = '1d'
+        merge_freq = '1d'
+    else:
+        raise ValueError(f"Invalid frequency: {frequency}. Use 'm', 'h', or 'd'.")
     
-    data_floored_min                      = data.copy()
-    data_floored_min.index                = data_floored_min.index.floor('Min')    
-    price_range                           = pd.DataFrame({'time_pd': pd.date_range(data_floored_min.index.min(),data_floored_min.index.max(),freq='1 min',tz='UTC')})
-    price_range                           = price_range.set_index('time_pd')
-    new_data                              = price_range.merge(data_floored_min,left_index=True,right_index=True,how='left')
-    new_data['quotePrice']                = new_data['quotePrice'].ffill()
-    price_data_aggregated                 = new_data.resample(resample_option).last().copy()
+    data_floored_min = data.copy()
+    print(f"Input data index type: {type(data_floored_min.index)}")
+    print(f"Input data index dtype: {data_floored_min.index.dtype}")
+    
+    # Ensure input index is DatetimeIndex with ns precision
+    if not isinstance(data_floored_min.index, pd.DatetimeIndex):
+        data_floored_min.index = pd.to_datetime(data_floored_min.index, utc=True)
+        print("Converted input data index to DatetimeIndex")
+    data_floored_min.index = data_floored_min.index.astype('datetime64[ns, UTC]')
+    print(f"data_floored_min index dtype after conversion: {data_floored_min.index.dtype}")
+    
+    # Floor index to merge frequency
+    data_floored_min.index = data_floored_min.index.floor(merge_freq)
+    print(f"data_floored_min index type after floor: {type(data_floored_min.index)}")
+    print(f"data_floored_min index dtype after floor: {data_floored_min.index.dtype}")
+    
+    # Generate price range with merge frequency
+    price_range = pd.DataFrame(
+        index=pd.date_range(
+            start=data_floored_min.index.min(),
+            end=data_floored_min.index.max(),
+            freq=merge_freq,
+            tz='UTC'
+        )
+    )
+    print(f"price_range index type: {type(price_range.index)}")
+    print(f"price_range index dtype: {price_range.index.dtype}")
+    
+    # Use merge_asof to reduce NaN values
+    new_data = pd.merge_asof(
+        price_range,
+        data_floored_min,
+        left_index=True,
+        right_index=True,
+        direction='backward'
+    )
+    print(f"new_data index type before resample: {type(new_data.index)}")
+    print(f"new_data index dtype before resample: {new_data.index.dtype}")
+    print(f"new_data quotePrice NaN count before ffill: {new_data['quotePrice'].isna().sum()}")
+    
+    # Forward-fill quotePrice
+    new_data['quotePrice'] = new_data['quotePrice'].ffill()
+    print(f"new_data quotePrice NaN count after ffill: {new_data['quotePrice'].isna().sum()}")
+    
+    # Resample to desired frequency
+    price_data_aggregated = new_data.resample(resample_option).last().copy()
     price_data_aggregated['price_return'] = price_data_aggregated['quotePrice'].pct_change()
+    
     return price_data_aggregated
 
 def aggregate_swap_data(data, frequency):

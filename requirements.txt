@@ -1,0 +1,9 @@
+pandas
+numpy
+arch
+scipy
+plotly
+requests
+google-cloud-bigquery
+python-dateutil
+statsmodels

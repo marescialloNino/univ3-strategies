@@ -7,87 +7,137 @@ import ActiveStrategyFramework
 import scipy
 import copy
 
+import pandas as pd
+import numpy as np
+import statsmodels.tsa.ar_model as ar_model
+
 class AutoRegressiveStrategy:
-    def __init__(self,model_data,alpha_param,tau_param,volatility_reset_ratio,tokens_outside_reset = .05,data_frequency='D',default_width = .5,days_ar_model = 180,return_forecast_cutoff=0.15,z_score_cutoff=5):
+    def __init__(self, model_data, alpha_param, tau_param, volatility_reset_ratio, tokens_outside_reset=0.05, data_frequency='d', default_width=0.5, days_ar_model=180, return_forecast_cutoff=0.15, z_score_cutoff=5):
+        if data_frequency == 'd':
+            self.annualization_factor = 365**0.5
+            self.resample_option = '1d'
+            self.window_size = 15
+        elif data_frequency == 'h':
+            self.annualization_factor = (24*365)**0.5
+            self.resample_option = '1h'
+            self.window_size = 24 * 6  # 144 hours for 6-day dataset
+        elif data_frequency == 'm':
+            self.annualization_factor = (60*24*365)**0.5
+            self.resample_option = '1min'
+            self.window_size = 60
         
-        
-        # Allow for different input data frequencies, always get 1 day ahead forecast
-        # Model data frequency is expressed in minutes
-        
-        if   data_frequency == 'D':
-            self.annualization_factor = 365**.5
-            self.resample_option      = '1D'
-            self.window_size          = 15
-        elif data_frequency == 'H':
-            self.annualization_factor = (24*365)**.5
-            self.resample_option      = '1H'
-            self.window_size          = 30
-        elif data_frequency == 'M':
-            self.annualization_factor = (60*24*365)**.5
-            self.resample_option      = '1 min'
-            self.window_size          = 60
-            
-        
-        self.alpha_param            = alpha_param
-        self.tau_param              = tau_param
+        self.alpha_param = alpha_param
+        self.tau_param = tau_param
         self.volatility_reset_ratio = volatility_reset_ratio
-        self.data_frequency         = data_frequency
-        self.tokens_outside_reset   = tokens_outside_reset
-        self.default_width          = default_width
+        self.data_frequency = data_frequency
+        self.tokens_outside_reset = tokens_outside_reset
+        self.default_width = default_width
         self.return_forecast_cutoff = return_forecast_cutoff
-        self.days_ar_model          = days_ar_model
-        self.z_score_cutoff         = z_score_cutoff
-        self.window_size            = 60*24*30
-        self.model_data             = self.clean_data_for_garch(model_data)
-
+        self.days_ar_model = days_ar_model
+        self.z_score_cutoff = z_score_cutoff
         
-    #####################################
-    # Estimate AR model at current timepoint
-    #####################################
-    
-    def clean_data_for_garch(self,data_in):        
-            data_filled                  = ActiveStrategyFramework.fill_time(data_in)
-
-            # Filter according to Median Absolute Deviation
-            # 1. Generate rolling median
-            data_filled_rolling              = data_filled.quotePrice.rolling(window=self.window_size) 
-            data_filled['roll_median']       = data_filled_rolling.median()
-            
-            # 2. Compute rolling absolute deviation of current price from median under Gaussian
-            roll_dev                         = np.abs(data_filled.quotePrice - data_filled.roll_median)
-            data_filled['median_abs_dev']    = 1.4826*roll_dev.rolling(window=self.window_size).median()
-            
-            # 3. Identify outliers using MAD
-            outlier_indices                = np.abs(data_filled.quotePrice - data_filled.roll_median) >= self.z_score_cutoff*data_filled['median_abs_dev']
-
-            # impute
-            #data_filled['quotePrice']      = np.where(outlier_indices.values == 0,  data_filled['quotePrice'].values,data_filled['roll_median'].values)
-
-            # drop
-            data_filled = data_filled[~outlier_indices]
-            return data_filled
+        model_data = model_data.copy()
+        if not isinstance(model_data.index, pd.DatetimeIndex):
+            model_data.index = pd.to_datetime(model_data.index, utc=True)
+        model_data.index = model_data.index.astype('datetime64[ns, UTC]')
+        print(f"model_data index dtype before clean_data_for_garch: {model_data.index.dtype}")
         
-    def generate_model_forecast(self,timepoint):
+        self.model_data = self.clean_data_for_garch(model_data)
         
-            # Compute returns with data_frequency frequency starting at the current timepoint and looking backwards
-            current_data                   = self.model_data.loc[:timepoint].resample(self.resample_option,closed='right',label='right',origin=timepoint).last()      
-            current_data['price_return']   = current_data['quotePrice'].pct_change()
-            current_data         = current_data.dropna(axis=0,subset=['price_return'])
-            
-            ar_model             = arch.univariate.ARX(current_data.price_return[(current_data.index >= (timepoint - pd.Timedelta(str(self.days_ar_model)+' days')))].to_numpy(), lags=1,rescale=True)
-            ar_model.volatility  = arch.univariate.GARCH(p=1,q=1)
-            
-            res                  = ar_model.fit(update_freq=0, disp="off")
-            scale                = res.scale
+        print(f"model_data index type after clean_data_for_garch: {type(self.model_data.index)}")
+        print(f"model_data index dtype after clean_data_for_garch: {self.model_data.index.dtype}")
+        print(f"model_data shape after clean_data_for_garch: {self.model_data.shape}")
 
-            forecasts            = res.forecast(horizon=1, reindex=False)
+    def clean_data_for_garch(self, data_in):
+        print(f"data_in index dtype in clean_data_for_garch: {data_in.index.dtype}")
+        data_filled = ActiveStrategyFramework.fill_time(data_in)
+        
+        print(f"data_filled index type in clean_data_for_garch: {type(data_filled.index)}")
+        print(f"data_filled index dtype in clean_data_for_garch: {data_filled.index.dtype}")
+        print(f"data_filled shape: {data_filled.shape}")
+        
+        # Adjust window_size based on data length
+        data_length = len(data_filled)
+        window_size = min(self.window_size, data_length // 2)
+        print(f"Adjusted window_size in clean_data_for_garch: {window_size}")
+        
+        data_filled_rolling = data_filled.quotePrice.rolling(window=window_size)
+        data_filled['roll_median'] = data_filled_rolling.median()
+        roll_dev = np.abs(data_filled.quotePrice - data_filled.roll_median)
+        data_filled['median_abs_dev'] = 1.4826 * roll_dev.rolling(window=window_size).median()
+        outlier_indices = np.abs(data_filled.quotePrice - data_filled.roll_median) >= self.z_score_cutoff * data_filled['median_abs_dev']
+        data_filled = data_filled[~outlier_indices]
+        
+        print(f"data_filled shape after outlier removal: {data_filled.shape}")
+        return data_filled
 
-            return_forecast      = forecasts.mean.to_numpy()[0][-1] / scale
-            sd_forecast          = (forecasts.variance.to_numpy()[0][-1] / np.power(res.scale,2))**0.5 * self.annualization_factor
-            
-            result_dict          = {'return_forecast': return_forecast,
-                                    'sd_forecast'    : sd_forecast}            
-            return result_dict
+    def generate_model_forecast(self, price_data, time_data):
+        # Validate inputs
+        if not isinstance(price_data, (pd.Series, np.ndarray)) or not isinstance(time_data, (pd.Index, np.ndarray)):
+            raise TypeError("price_data must be a Series or array, time_data must be an Index or array")
+        
+        if len(price_data) == 0 or len(time_data) == 0:
+            raise ValueError("Empty price_data or time_data provided to generate_model_forecast")
+        
+        # Convert to Series with DatetimeIndex
+        if not isinstance(price_data, pd.Series):
+            price_data = pd.Series(price_data, index=time_data)
+        if not isinstance(time_data, pd.Index):
+            time_data = pd.Index(time_data)
+        
+        if not isinstance(time_data, pd.DatetimeIndex):
+            time_data = pd.to_datetime(time_data, utc=True)
+        time_data = time_data.astype('datetime64[ns, UTC]')
+        price_data.index = time_data
+        
+        print(f"generate_model_forecast price_data shape: {price_data.shape}")
+        print(f"generate_model_forecast time_data range: {time_data.min()} to {time_data.max()}")
+        
+        # Resample price_data to match frequency
+        data_resampled = pd.DataFrame(
+            {'quotePrice': price_data.values},
+            index=time_data
+        ).resample(self.resample_option).last().ffill()
+        
+        print(f"data_resampled shape: {data_resampled.shape}")
+        
+        # Calculate returns
+        data_resampled['price_return'] = data_resampled['quotePrice'].pct_change()
+        returns = data_resampled['price_return'].dropna()
+        
+        # Adjust days_ar_model based on available data
+        if self.data_frequency == 'd':
+            samples_per_day = 1
+        elif self.data_frequency == 'h':
+            samples_per_day = 24
+        elif self.data_frequency == 'm':
+            samples_per_day = 60 * 24
+        
+        max_samples = len(returns)
+        required_samples = self.days_ar_model * samples_per_day
+        adjusted_samples = min(required_samples, max_samples - 1)
+        adjusted_days = adjusted_samples // samples_per_day
+        print(f"Adjusted days_ar_model: {adjusted_days}, samples: {adjusted_samples}")
+        
+        if adjusted_samples < 10:
+            raise ValueError(f"Insufficient data for AR model: {adjusted_samples} samples available, need at least 10.")
+        
+        # Fit AR model
+        returns_for_model = returns[-adjusted_samples:]
+        ar_model_fit = ar_model.AutoReg(returns_for_model, lags=2).fit()
+        
+        # Generate forecast
+        forecast = ar_model_fit.forecast(steps=1)
+        forecast_mean = forecast.iloc[0] if isinstance(forecast, pd.Series) else forecast[0]
+        
+        # Fit GARCH model for volatility
+        garch_model = arch.arch_model(returns_for_model * 100, vol='Garch', p=1, q=1, dist='normal')
+        garch_fit = garch_model.fit(disp='off')
+        garch_forecast = garch_fit.forecast(horizon=1)
+        sd_forecast = np.sqrt(garch_forecast.variance.values[-1, -1]) / 100
+        
+        return {'return_forecast': forecast_mean, 'sd_forecast': sd_forecast}
+
 
         
     def check_compound_possible(self,current_strat_obs):
@@ -147,135 +197,89 @@ class AutoRegressiveStrategy:
     # If it is, remove the liquidity and set new ranges
     #####################################
         
-    def check_strategy(self,current_strat_obs):
+    def check_strategy(self, current_strat_obs):
+        LIMIT_ORDER_BALANCE = current_strat_obs.liquidity_ranges[1]['token_0'] * current_strat_obs.price + current_strat_obs.liquidity_ranges[1]['token_1']
+        BASE_ORDER_BALANCE = current_strat_obs.liquidity_ranges[0]['token_0'] * current_strat_obs.price + current_strat_obs.liquidity_ranges[0]['token_1']
         
-        model_forecast      = None
-        LIMIT_ORDER_BALANCE = current_strat_obs.liquidity_ranges[1]['token_0'] * current_strat_obs.price + current_strat_obs.liquidity_ranges[1]['token_1']  
-        BASE_ORDER_BALANCE  = current_strat_obs.liquidity_ranges[0]['token_0'] * current_strat_obs.price + current_strat_obs.liquidity_ranges[0]['token_1']  
-        
-        if not 'last_vol_check' in current_strat_obs.strategy_info:
+        if 'last_vol_check' not in current_strat_obs.strategy_info:
             current_strat_obs.strategy_info['last_vol_check'] = current_strat_obs.time
         
-        #####################################
-        #
-        # This strategy rebalances in these scenarios:
-        # 1. Leave Reset Range
-        # 2. Volatility has dropped           (volatility_reset_ratio)
-        # 3. An outside initial reset is forced
-        # 4. Tokens outside the position will be compounded when they are > tokens_outside_reset % of the LP tokens
-        # 
-        #####################################        
+        # Check reset conditions
+        LEFT_RANGE_LOW = current_strat_obs.price < current_strat_obs.strategy_info['reset_range_lower']
+        LEFT_RANGE_HIGH = current_strat_obs.price > current_strat_obs.strategy_info['reset_range_upper']
         
-        #######################
-        # 1. Leave Reset Range
-        #######################
-        LEFT_RANGE_LOW      = current_strat_obs.price < current_strat_obs.strategy_info['reset_range_lower']
-        LEFT_RANGE_HIGH     = current_strat_obs.price > current_strat_obs.strategy_info['reset_range_upper']
+        # Volatility rebalance check
+        VOL_REBALANCE = False
+        ar_check_frequency = 60  # Check every hour
+        time_since_reset = (current_strat_obs.time - current_strat_obs.strategy_info['last_vol_check']).total_seconds() / 60
         
-        #######################
-        # 2. Volatility has dropped 
-        #######################
-        # Rebalance if volatility has gone down significantly
-        # When volatility increases the reset range will be hit
-        # Check every hour (60  minutes)
-        
-        ar_check_frequency = 60        
-        time_since_reset   = current_strat_obs.time - current_strat_obs.strategy_info['last_vol_check']
-        
-        VOL_REBALANCE    = False
-        if (time_since_reset.total_seconds() / 60) >= ar_check_frequency:
+        if time_since_reset >= ar_check_frequency:
+            current_strat_obs.strategy_info['last_vol_check'] = current_strat_obs.time
+            # Use self.model_data up to current time
+            price_data = self.model_data['quotePrice'][self.model_data.index <= current_strat_obs.time]
+            time_data = self.model_data.index[self.model_data.index <= current_strat_obs.time]
+            model_forecast = self.generate_model_forecast(price_data, time_data)
             
-            current_strat_obs.strategy_info['last_vol_check'] = current_strat_obs.time
-            model_forecast                                    = self.generate_model_forecast(current_strat_obs.time)
-        
-            if model_forecast['sd_forecast']/current_strat_obs.liquidity_ranges[0]['volatility'] <= self.volatility_reset_ratio:
+            if model_forecast['sd_forecast'] / current_strat_obs.liquidity_ranges[0]['volatility'] <= self.volatility_reset_ratio:
                 VOL_REBALANCE = True
-            else:
-                VOL_REBALANCE = False
         
-        #######################
-        # 3. Outside reset is forced
-        #######################
+        # Initial reset check
+        INITIAL_RESET = current_strat_obs.strategy_info.get('force_initial_reset', False)
+        if INITIAL_RESET:
+            current_strat_obs.strategy_info['force_initial_reset'] = False
         
-        if 'force_initial_reset' in current_strat_obs.strategy_info:
-            if current_strat_obs.strategy_info['force_initial_reset']:
-                INITIAL_RESET                        = True
-                current_strat_obs.strategy_info['force_initial_reset'] = False
-            else:
-                INITIAL_RESET = False
-        else:
-            INITIAL_RESET = False
+        # Tokens outside check
+        left_over_balance = (current_strat_obs.token_0_left_over + current_strat_obs.token_0_fees_uncollected) * current_strat_obs.price + \
+                            (current_strat_obs.token_1_left_over + current_strat_obs.token_1_fees_uncollected)
+        TOKENS_OUTSIDE_LARGE = left_over_balance > self.tokens_outside_reset * (LIMIT_ORDER_BALANCE + BASE_ORDER_BALANCE)
         
-        #######################
-        # 4. Compound when tokens outside of pool greater than tokens_outside_reset% of value of LP position
-        #######################
-        
-        left_over_balance = (current_strat_obs.token_0_left_over + current_strat_obs.token_0_fees_uncollected) * current_strat_obs.price \
-                            + (current_strat_obs.token_1_left_over + current_strat_obs.token_0_fees_uncollected)                
-        
-        if (left_over_balance > self.tokens_outside_reset * (LIMIT_ORDER_BALANCE + BASE_ORDER_BALANCE)):
-            TOKENS_OUTSIDE_LARGE = True
-        else:
-            TOKENS_OUTSIDE_LARGE = False        
-
-        # If a reset is necessary
-        if (((LEFT_RANGE_LOW | LEFT_RANGE_HIGH) | VOL_REBALANCE) | INITIAL_RESET):
+        # Reset if necessary
+        if (LEFT_RANGE_LOW | LEFT_RANGE_HIGH) | VOL_REBALANCE | INITIAL_RESET:
             current_strat_obs.reset_point = True
-            
-            if (LEFT_RANGE_LOW | LEFT_RANGE_HIGH):
-                current_strat_obs.reset_reason = 'exited_range'
-            elif VOL_REBALANCE:
-                current_strat_obs.reset_reason = 'vol_rebalance'
-            elif TOKENS_OUTSIDE_LARGE:
-                current_strat_obs.reset_reason = 'tokens_outside_large'
-            elif INITIAL_RESET:
-                current_strat_obs.reset_reason = 'initial_reset'
-            
-            # Remove liquidity and claim fees 
+            current_strat_obs.reset_reason = 'exited_range' if (LEFT_RANGE_LOW | LEFT_RANGE_HIGH) else \
+                                            'vol_rebalance' if VOL_REBALANCE else 'initial_reset'
             current_strat_obs.remove_liquidity()
-            
-            # Reset liquidity            
-            liquidity_ranges,strategy_info = self.set_liquidity_ranges(current_strat_obs,model_forecast)
-            return liquidity_ranges,strategy_info
+            liquidity_ranges, strategy_info = self.set_liquidity_ranges(current_strat_obs, model_forecast)
+            return liquidity_ranges, strategy_info
         
-        # If a compound is necessary
-        elif  TOKENS_OUTSIDE_LARGE:
-            
+        # Compound if necessary
+        if TOKENS_OUTSIDE_LARGE:
             if self.check_compound_possible(current_strat_obs):
-                # if price allows for a compound
                 current_strat_obs.compound_point = True
                 current_strat_obs.reset_reason = 'compound'
-                # Compound position
                 self.compound(current_strat_obs)
-                return current_strat_obs.liquidity_ranges,current_strat_obs.strategy_info
+                return current_strat_obs.liquidity_ranges, current_strat_obs.strategy_info
             else:
-                # otherwise rebalance
                 current_strat_obs.reset_point = True
                 current_strat_obs.reset_reason = 'tokens_outside_large'
-
-            
-                # Remove liquidity and claim fees 
                 current_strat_obs.remove_liquidity()
-                
-                # Reset liquidity            
-                liquidity_ranges,strategy_info = self.set_liquidity_ranges(current_strat_obs)
-                return liquidity_ranges,strategy_info
-        else:
-            return current_strat_obs.liquidity_ranges,current_strat_obs.strategy_info
+                liquidity_ranges, strategy_info = self.set_liquidity_ranges(current_strat_obs)
+                return liquidity_ranges, strategy_info
+        
+        return current_strat_obs.liquidity_ranges, current_strat_obs.strategy_info
 
     ########################################################
     # Rebalance the position
     ########################################################
             
-    def set_liquidity_ranges(self,current_strat_obs,model_forecast = None):
-        
-        ###########################################################
-        # STEP 1: Do calculations required to determine base liquidity bounds
-        ###########################################################
-        
-        # Fit model if not passed from check_strategy
+    def set_liquidity_ranges(self, current_strat_obs, model_forecast=None, price_data=None, time_data=None):
         if model_forecast is None:
-            model_forecast = self.generate_model_forecast(current_strat_obs.time)
+            if price_data is None or time_data is None:
+                # Fallback to self.model_data
+                price_data = self.model_data['quotePrice'][self.model_data.index <= current_strat_obs.time]
+                time_data = self.model_data.index[self.model_data.index <= current_strat_obs.time]
+            else:
+                # Use provided price_data up to current time
+                mask = time_data <= current_strat_obs.time
+                price_data = price_data[mask]
+                time_data = time_data[mask]
+            
+            if len(price_data) < 10:
+                print(f"Warning: Limited data for forecast at {current_strat_obs.time}, using recent data")
+                price_data = self.model_data['quotePrice'].tail(720)  # Last 30 days
+                time_data = self.model_data.index[-720:]
+            
+            model_forecast = self.generate_model_forecast(price_data, time_data)
             
         # Make sure strategy_info (dict with additional vars exists)    
         if current_strat_obs.strategy_info is None:
