@@ -349,242 +349,203 @@ def analyze_strategy(data_usd,frequency = 'M'):
     return summary_strat
 
 
-def plot_strategy(data_strategy,y_axis_label,base_color = '#ff0000',flip_price_axis=False):
-    import plotly.graph_objects as go
-    CHART_SIZE = 300
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+import numpy as np
+
+def plot_strategy(data_strategy, y_axis_label, base_color='#ff0000', flip_price_axis=False):
+    CHART_SIZE = (10, 4)
     
     if flip_price_axis:
         data_strategy_here = data_strategy.copy()
-        data_strategy_here.base_range_lower  = 1/data_strategy_here.base_range_lower
-        data_strategy_here.base_range_upper  = 1/data_strategy_here.base_range_upper
-        data_strategy_here.limit_range_lower = 1/data_strategy_here.limit_range_lower
-        data_strategy_here.limit_range_upper = 1/data_strategy_here.limit_range_upper
-        data_strategy_here.reset_range_lower = 1/data_strategy_here.reset_range_lower
-        data_strategy_here.reset_range_upper = 1/data_strategy_here.reset_range_upper
-        data_strategy_here.price             = 1/data_strategy_here.price
+        data_strategy_here['base_range_lower'] = 1 / data_strategy_here['base_range_lower']
+        data_strategy_here['base_range_upper'] = 1 / data_strategy_here['base_range_upper']
+        data_strategy_here['reset_range_lower'] = 1 / data_strategy_here['reset_range_lower']
+        data_strategy_here['reset_range_upper'] = 1 / data_strategy_here['reset_range_upper']
+        data_strategy_here['price'] = 1 / data_strategy_here['price']
     else:
         data_strategy_here = data_strategy.copy()
-        
-    fig_strategy = go.Figure()
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time_pd'], 
-        y=data_strategy_here['base_range_lower'],
-        fill=None,
-        mode='lines',
-        showlegend = False,
-        line_color=base_color,
-        ))
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
-        y=data_strategy_here['base_range_upper'],
-        name='Base Position',
-        fill='tonexty', # fill area between trace0 and trace1
-        mode='lines', line_color=base_color))
-
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
-        y=data_strategy_here['limit_range_lower'],
-        fill=None,
-        mode='lines',
-        showlegend = False,
-        line_color='#6f6f6f'))
-
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
-        y=data_strategy_here['limit_range_upper'],
-        name='Base + Limit Position',
-        fill='tonexty', # fill area between trace0 and trace1
-        mode='lines', line_color='#6f6f6f',))
-
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
-        y=data_strategy_here['reset_range_lower'],
-        name='Strategy Reset Bound',
-        line=dict(width=2,dash='dot',color='black')))
-
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
-        y=data_strategy_here['reset_range_upper'],
-        showlegend = False,
-        line=dict(width=2,dash='dot',color='black',)))
-
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
-        y=data_strategy_here['price'],
-        name='Price',
-        line=dict(width=2,color='black')))
-
-    fig_strategy.update_layout(
-        margin=dict(l=20, r=20, t=40, b=20),
-        height= CHART_SIZE,
-        title = 'Strategy Simulation',
-        xaxis_title="Date",
-        yaxis_title=y_axis_label,
+    
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    
+    # Base position filled area
+    ax.fill_between(
+        data_strategy_here['time_pd'], 
+        data_strategy_here['base_range_lower'],
+        data_strategy_here['base_range_upper'],
+        alpha=0.3,
+        color=base_color,
+        label='Base Position'
     )
+    
+    # Base position bounds
+    ax.plot(
+        data_strategy_here['time_pd'], 
+        data_strategy_here['base_range_lower'],
+        color=base_color,
+        linewidth=1
+    )
+    ax.plot(
+        data_strategy_here['time_pd'], 
+        data_strategy_here['base_range_upper'],
+        color=base_color,
+        linewidth=1
+    )
+    
+    # Reset range bounds
+    ax.plot(
+        data_strategy_here['time_pd'], 
+        data_strategy_here['reset_range_lower'],
+        color='black',
+        linewidth=2,
+        linestyle='--',
+        label='Strategy Reset Bound'
+    )
+    ax.plot(
+        data_strategy_here['time_pd'], 
+        data_strategy_here['reset_range_upper'],
+        color='black',
+        linewidth=2,
+        linestyle='--'
+    )
+    
+    # Price
+    ax.plot(
+        data_strategy_here['time_pd'], 
+        data_strategy_here['price'],
+        color='black',
+        linewidth=2,
+        label='Price'
+    )
+    
+    # Formatting
+    ax.set_title('Strategy Simulation', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel(y_axis_label, fontsize=12)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    # Format x-axis dates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig
 
-    fig_strategy.show(renderer="png")
-    
-    return fig_strategy
-    
-    
+
 def plot_position_value(data_strategy):
-    import plotly.graph_objects as go
-    CHART_SIZE = 300
+    CHART_SIZE = (10, 4)
 
-    fig_strategy = go.Figure()
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy['time'], 
-        y=data_strategy['value_position_usd'],
-        name='Value of LP Position',
-        line=dict(width=2,color='red')))
+    # Validate required columns
+    required_columns = ['time_pd', 'value_position_usd', 'value_hold_usd']
+    if not all(col in data_strategy.columns for col in required_columns):
+        print("Error: Missing required columns in data_strategy")
+        return None
 
-    fig_strategy.add_trace(go.Scatter(
-        x=data_strategy['time'], 
-        y=data_strategy['value_hold_usd'],
-        name='Value of Holding',
-        line=dict(width=2,color='blue')))
-
-    fig_strategy.update_layout(
-        margin=dict(l=20, r=20, t=40, b=20),
-        height= CHART_SIZE,
-        title = 'Strategy Simulation — LP Position vs. Holding',
-        xaxis_title="Date",
-        yaxis_title='Position Value',
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    
+    ax.plot(
+        data_strategy['time_pd'], 
+        data_strategy['value_position_usd'],
+        color='red',
+        linewidth=2,
+        label='Value of LP Position'
     )
 
-    fig_strategy.show(renderer="png")
-    
-    return fig_strategy
-    
-    
-def plot_asset_composition(data_strategy,token_0_name,token_1_name):
-    import plotly.graph_objects as go
-    CHART_SIZE = 300
-    # 3 - Asset Composition
-    fig_composition = go.Figure()
-    fig_composition.add_trace(go.Scatter(
-        x=data_strategy['time'], y=data_strategy['token_0_total'],
-        mode='lines',
-        name=token_0_name,
-        line=dict(width=0.5, color='#ff0000'),
-        stackgroup='one', # define stack group
-        groupnorm='percent'
-    ))
-    fig_composition.add_trace(go.Scatter(
-        x=data_strategy['time'], y=data_strategy['token_1_total']/data_strategy['price'],
-        mode='lines',
-        name=token_1_name,
-        line=dict(width=0.5, color='#f4f4f4'),
-        stackgroup='one'
-    ))
-
-    fig_composition.update_layout(
-        showlegend=True,
-        xaxis_type='date',
-        yaxis=dict(
-            type='linear',
-            range=[1, 100],
-            ticksuffix='%'))
-
-    fig_composition.update_layout(
-        margin=dict(l=20, r=20, t=40, b=20),
-        height= CHART_SIZE,
-        title = 'Position Asset Composition',
-        xaxis_title="Date",
-        yaxis_title="Position %",
-        legend_title='Token'
+    ax.plot(
+        data_strategy['time_pd'], 
+        data_strategy['value_hold_usd'],
+        color='blue',
+        linewidth=2,
+        label='Value of Holding'
     )
 
-    fig_composition.show(renderer="png")
+    # Formatting
+    ax.set_title('LP Position vs. Holding', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('Position Value USD', fontsize=12)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
     
-    return fig_composition
+    # Format x-axis dates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig
+
 
 def plot_position_return_decomposition(data_strategy):
-    import plotly.graph_objects as go
+    CHART_SIZE = (10, 4)
+
+    # Validate required columns
+    required_columns = ['time_pd', 'cum_fees_usd', 'value_hold_usd', 'value_position_usd']
+    if not all(col in data_strategy.columns for col in required_columns):
+        print("Error: Missing required columns in data_strategy")
+        return None
+
+    if data_strategy.empty:
+        print("Error: data_strategy is empty")
+        return None
+
     INITIAL_POSITION_VALUE = data_strategy.iloc[0]['value_position_usd']
-    CHART_SIZE = 300
 
-    fig_income = go.Figure()
-    fig_income.add_trace(go.Scatter(
-        x=data_strategy['time'], 
-        y=data_strategy['cum_fees_usd']/INITIAL_POSITION_VALUE,
-        fill=None,
-        mode='lines',
-        line_color='blue',
-        name='Accumulated Fees',
-        ))
-
-    fig_income.add_trace(go.Scatter(
-        x=data_strategy['time'], 
-        y=(data_strategy['value_hold_usd']-data_strategy['value_position_usd'])/INITIAL_POSITION_VALUE,
-        fill=None,
-        mode='lines',
-        line_color='black',
-        name='Value Hold - Position',
-        ))
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
     
-    fig_income.add_trace(go.Scatter(
-        x=data_strategy['time'], 
-        y=(data_strategy['value_hold_usd'])/INITIAL_POSITION_VALUE - 1,
-        fill=None,
-        mode='lines',
-        line_color='green',
-        name='Value Hold',
-        ))
-
-    fig_income.add_trace(go.Scatter(
-        x=data_strategy['time'], 
-        y=data_strategy['value_position_usd']/INITIAL_POSITION_VALUE-1,
-        fill=None,
-        mode='lines',
-        line_color='#ff0000',
-        name='Net Position Value'
-        ))
-
-    fig_income.update_layout(
-        margin=dict(l=20, r=20, t=40, b=20),
-        height= CHART_SIZE,
-        title = 'Position Value Change Decomposition',
-        xaxis_title="Date",
-        yaxis_title="Position %",
-        legend_title='Token',
-        yaxis=dict(tickformat = "%"),
+    ax.plot(
+        data_strategy['time_pd'], 
+        data_strategy['cum_fees_usd'] / INITIAL_POSITION_VALUE,
+        color='blue',
+        linewidth=2,
+        label='Accumulated Fees'
     )
 
-    fig_income.show(renderer="png")
+    ax.plot(
+        data_strategy['time_pd'], 
+        (data_strategy['value_hold_usd'] - data_strategy['value_position_usd']) / INITIAL_POSITION_VALUE,
+        color='black',
+        linewidth=2,
+        label='Value Hold - Position'
+    )
     
-    return fig_income
-
-
-def plot_position_composition(data_strategy):
-    import plotly.graph_objects as go
-    CHART_SIZE = 300
-    fig_position_composition = go.Figure()
-    fig_position_composition.add_trace(go.Scatter(
-        x=data_strategy['time'], y=data_strategy['base_position_value_usd'],
-        mode='lines',
-        name='Base Position',
-        line=dict(width=0.5, color='#ff0000'),
-        stackgroup='one', # define stack group
-    #     groupnorm='percent'
-    ))
-    fig_position_composition.add_trace(go.Scatter(
-        x=data_strategy['time'], y=data_strategy['limit_position_value_usd'],
-        mode='lines',
-        name='Limit Position',
-        line=dict(width=0.5, color='#6f6f6f'),
-        stackgroup='one'
-    ))
-
-    fig_position_composition.update_layout(
-        margin=dict(l=20, r=20, t=40, b=20),
-        height= CHART_SIZE,
-        title = 'Base / Limit Values',
-        xaxis_title="Date",
-        yaxis_title="USD Value",
-        legend_title='Value'
+    ax.plot(
+        data_strategy['time_pd'], 
+        (data_strategy['value_hold_usd'] / INITIAL_POSITION_VALUE) - 1,
+        color='green',
+        linewidth=2,
+        label='Value Hold'
     )
 
-    fig_position_composition.show(renderer="png")
+    ax.plot(
+        data_strategy['time_pd'], 
+        (data_strategy['value_position_usd'] / INITIAL_POSITION_VALUE) - 1,
+        color='#ff0000',
+        linewidth=2,
+        label='Net Position Value'
+    )
 
-    return fig_position_composition
+    # Formatting
+    ax.set_title('Position Value Decomposition', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('Position returns %', fontsize=12)
+    ax.legend(loc='best', title='Component')
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis as percentage
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.1%}'.format(y)))
+    
+    # Format x-axis dates
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return fig
