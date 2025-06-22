@@ -220,7 +220,7 @@ def generate_simulation_series(simulations,strategy_in,token_0_usd_data = None):
         data_return = data_strategy
     else:
         # Merge in usd price data
-        token_0_usd_data['price_0_usd']         = 1/token_0_usd_data['quotePrice']
+        token_0_usd_data['price_0_usd']         = token_0_usd_data['quotePrice']
         token_0_usd_data['time_pd']             = token_0_usd_data.index
         token_0_usd_data                        = token_0_usd_data.set_index('time_pd').sort_index()
         
@@ -251,37 +251,62 @@ def fill_time(data):
     new_data                  = price_range.merge(data,left_index=True,right_index=True,how='left').ffill()    
     return new_data
 
-def aggregate_price_data(data,frequency):
-    
-    if   frequency == 'M':
-            resample_option      = '1 min'
+def aggregate_price_data(data, frequency):
+    if frequency == 'M':
+        resample_option = '1 min'
     elif frequency == 'H':
-            resample_option      = '1H'
+        resample_option = '1H'
     elif frequency == 'D':
-            resample_option      = '1D'
+        resample_option = '1D'
     
-    data_floored_min                      = data.copy()
-    data_floored_min.index                = data_floored_min.index.floor('Min')    
-    price_range                           = pd.DataFrame({'time_pd': pd.date_range(data_floored_min.index.min(),data_floored_min.index.max(),freq='1 min',tz='UTC')})
-    price_range                           = price_range.set_index('time_pd')
-    new_data                              = price_range.merge(data_floored_min,left_index=True,right_index=True,how='left')
-    new_data['quotePrice']                = new_data['quotePrice'].ffill()
-    price_data_aggregated                 = new_data.resample(resample_option).last().copy()
+    data_floored_min = data.copy()
+    data_floored_min.index = data_floored_min.index.floor('Min')    
+    price_range = pd.DataFrame({
+        'time_pd': pd.date_range(
+            data_floored_min.index.min(),
+            data_floored_min.index.max(),
+            freq='1 min',
+            tz='UTC'
+        )
+    })
+    price_range = price_range.set_index('time_pd')
+    new_data = price_range.merge(data_floored_min, left_index=True, right_index=True, how='left')
+    new_data['quotePrice'] = new_data['quotePrice'].ffill()
+    
+    # Ensure the index is a DatetimeIndex before resampling
+    new_data.index = pd.to_datetime(new_data.index, utc=True)
+    
+    price_data_aggregated = new_data.resample(resample_option).last().copy()
     price_data_aggregated['price_return'] = price_data_aggregated['quotePrice'].pct_change()
     return price_data_aggregated
 
 def aggregate_swap_data(data, frequency):
-    
-    if   frequency == 'M':
-            resample_option      = '1 min'
+    if frequency == 'M':
+        resample_option = '1 min'
     elif frequency == 'H':
-            resample_option      = '1H'
+        resample_option = '1H'
     elif frequency == 'D':
-            resample_option      = '1D'
-            
-    swap_data_tmp = data[['amount0_adj', 'amount1_adj', 'virtual_liquidity_adj']].resample(resample_option).agg(
-        {'amount0_adj': np.sum, 'amount1_adj': np.sum, 'virtual_liquidity_adj': np.median})
+        resample_option = '1D'
     
+    # Define aggregation methods for all columns
+    agg_dict = {}
+    for col in data.columns:
+        if col in ['amount0', 'amount1', 'amount0_adj', 'amount1_adj']:
+            agg_dict[col] = np.sum  # Sum swap amounts
+        elif col in ['virtual_liquidity', 'virtual_liquidity_adj']:
+            agg_dict[col] = np.median  # Median for liquidity
+        elif col in ['tick_swap', 'token0', 'token1', 'sqrtPriceX96', 'pool', 'fee_tier', 'quotePrice']:
+            agg_dict[col] = 'last'  # Last for state/categorical columns
+        else:
+            agg_dict[col] = 'last'  # Default to last for unknown columns
+    
+    # Resample and aggregate
+    swap_data_tmp = data.resample(resample_option).agg(agg_dict)
+    
+    # Derive token_in based on net swap direction
+    swap_data_tmp['token_in'] = np.where(swap_data_tmp['amount0_adj'] > 0, 'token1', 'token0')
+    
+    # Forward-fill to handle missing values
     return swap_data_tmp.ffill()
 
 def analyze_strategy(data_usd,frequency = 'M'):
@@ -342,7 +367,7 @@ def plot_strategy(data_strategy,y_axis_label,base_color = '#ff0000',flip_price_a
         
     fig_strategy = go.Figure()
     fig_strategy.add_trace(go.Scatter(
-        x=data_strategy_here['time'], 
+        x=data_strategy_here['time_pd'], 
         y=data_strategy_here['base_range_lower'],
         fill=None,
         mode='lines',
