@@ -5,240 +5,165 @@ import UNI_v3_funcs
 import copy
 
 class StrategyObservation:
-    def __init__(self,timepoint,
-                     current_price,
-                     strategy_in,
-                     liquidity_in_0,
-                     liquidity_in_1,
-                     fee_tier,
-                     decimals_0,
-                     decimals_1,
-                     token_0_left_over        = 0.0,
-                     token_1_left_over        = 0.0,
-                     token_0_fees_uncollected = 0.0,
-                     token_1_fees_uncollected = 0.0,
-                     liquidity_ranges         = None,
-                     strategy_info            = None,
-                     swaps                    = None,
-                     simulate_strat           = True):
-        
-        ######################################
-        # 1. Store current values
-        ######################################
-        
-        self.time                        = timepoint
-        self.price                       = current_price
-        self.liquidity_in_0              = liquidity_in_0
-        self.liquidity_in_1              = liquidity_in_1
-        self.fee_tier                    = fee_tier
-        self.decimals_0                  = decimals_0
-        self.decimals_1                  = decimals_1
-        self.token_0_left_over           = token_0_left_over
-        self.token_1_left_over           = token_1_left_over
-        self.token_0_fees_uncollected    = token_0_fees_uncollected
-        self.token_1_fees_uncollected    = token_1_fees_uncollected
-        self.reset_point                 = False
-        self.compound_point              = False
-        self.reset_reason                = ''
-        self.decimal_adjustment          = 10**(self.decimals_1  - self.decimals_0)
-        self.tickSpacing                 = int(self.fee_tier*2*10000) if self.fee_tier > (100/1e6) else int(self.fee_tier*10000) # 1bp pool's tick spacing is 1x the fee tier, other pool's 2x
-        self.token_0_fees                = 0.0
-        self.token_1_fees                = 0.0
-        self.simulate_strat              = simulate_strat
-        self.strategy_info               = copy.deepcopy(strategy_info)
-        
-        TICK_P_PRE                       = math.log(self.decimal_adjustment*self.price,1.0001)
-        self.price_tick                  = math.floor(TICK_P_PRE/self.tickSpacing)*self.tickSpacing
-        self.price_tick_current          = math.floor(TICK_P_PRE)
-            
-        ######################################
-        # 2. Execute the strategy
-        #    If this is the first observation, need to generate ranges 
-        #    Otherwise, check if a rebalance is required and execute.
-        #        If swaps data has been fed in, it will be used to estimate fee income (for backtesting simulations)
-        #        If no swap data is fed in (for a live environment) only ranges will be updated 
-        ######################################
+    def __init__(self, timepoint, current_price, strategy_in, liquidity_in_0, liquidity_in_1, fee_tier,
+                 decimals_0, decimals_1, token_0_left_over=0.0, token_1_left_over=0.0,
+                 token_0_fees_uncollected=0.0, token_1_fees_uncollected=0.0, liquidity_ranges=None,
+                 strategy_info=None, swaps=None, simulate_strat=True, price_0_usd=None):
+        """Initialize the StrategyObservation with additional price_0_usd parameter."""
+        self.time = timepoint
+        self.price = current_price
+        self.liquidity_in_0 = liquidity_in_0
+        self.liquidity_in_1 = liquidity_in_1
+        self.fee_tier = fee_tier
+        self.decimals_0 = decimals_0
+        self.decimals_1 = decimals_1
+        self.token_0_left_over = token_0_left_over
+        self.token_1_left_over = token_1_left_over
+        self.token_0_fees_uncollected = token_0_fees_uncollected
+        self.token_1_fees_uncollected = token_1_fees_uncollected
+        self.reset_point = False
+        self.compound_point = False
+        self.reset_reason = ''
+        self.decimal_adjustment = 10**(self.decimals_1 - self.decimals_0)
+        self.tickSpacing = int(self.fee_tier * 2 * 10000) if self.fee_tier > (100 / 1e6) else int(self.fee_tier * 10000)
+        self.token_0_fees = 0.0
+        self.token_1_fees = 0.0
+        self.simulate_strat = simulate_strat
+        self.strategy_info = copy.deepcopy(strategy_info)
+        self.price_0_usd = price_0_usd  # USD price of token_0
+
+        TICK_P_PRE = math.log(self.decimal_adjustment * self.price, 1.0001)
+        self.price_tick = math.floor(TICK_P_PRE / self.tickSpacing) * self.tickSpacing
+        self.price_tick_current = math.floor(TICK_P_PRE)
+
         if liquidity_ranges is None:
-            self.liquidity_ranges,self.strategy_info  = strategy_in.set_liquidity_ranges(self)
-                                 
-        else: 
-            self.liquidity_ranges         = copy.deepcopy(liquidity_ranges)
-            
-            # Update amounts in each position according to current pool price
+            self.liquidity_ranges, self.strategy_info = strategy_in.set_liquidity_ranges(self)
+        else:
+            self.liquidity_ranges = copy.deepcopy(liquidity_ranges)
             for i in range(len(self.liquidity_ranges)):
                 self.liquidity_ranges[i]['time'] = self.time
-                
                 if self.simulate_strat:
                     amount_0, amount_1 = UNI_v3_funcs.get_amounts(self.price_tick_current,
                                                                  self.liquidity_ranges[i]['lower_bin_tick'],
                                                                  self.liquidity_ranges[i]['upper_bin_tick'],
                                                                  self.liquidity_ranges[i]['position_liquidity'],
-                                                                 self.decimals_0,
-                                                                 self.decimals_1)
-
+                                                                 self.decimals_0, self.decimals_1)
                     self.liquidity_ranges[i]['token_0'] = amount_0
                     self.liquidity_ranges[i]['token_1'] = amount_1
 
-            # If backtesting swaps, accrue the fees in the provided period
             if swaps is not None:
-                fees_token_0,fees_token_1           = self.accrue_fees(swaps)
-                self.token_0_fees                   = fees_token_0
-                self.token_1_fees                   = fees_token_1
-                
-            # Check strategy and potentially reset the ranges
-            self.liquidity_ranges,self.strategy_info     = strategy_in.check_strategy(self)
-                
-    ########################################################
-    # Accrue earned fees (not supply into LP yet)
-    ########################################################               
-    def accrue_fees(self,relevant_swaps):   
-        
+                fees_token_0, fees_token_1 = self.accrue_fees(swaps)
+                self.token_0_fees = fees_token_0
+                self.token_1_fees = fees_token_1
+
+            self.liquidity_ranges, self.strategy_info = strategy_in.check_strategy(self)
+
+    def accrue_fees(self, relevant_swaps):
         fees_earned_token_0 = 0.0
         fees_earned_token_1 = 0.0
-                
         if len(relevant_swaps) > 0:
-            
-            # For every swap in this time period
             for s in range(len(relevant_swaps)):
                 for i in range(len(self.liquidity_ranges)):
-                    in_range   = (self.liquidity_ranges[i]['lower_bin_tick'] <= relevant_swaps.iloc[s]['tick_swap']) and \
-                                 (self.liquidity_ranges[i]['upper_bin_tick'] >= relevant_swaps.iloc[s]['tick_swap'])
-
+                    in_range = (self.liquidity_ranges[i]['lower_bin_tick'] <= relevant_swaps.iloc[s]['tick_swap']) and \
+                               (self.liquidity_ranges[i]['upper_bin_tick'] >= relevant_swaps.iloc[s]['tick_swap'])
                     token_0_in = relevant_swaps.iloc[s]['token_in'] == 'token0'
-                    
-                    # Low liquidity tokens can have zero liquidity after swap
-                    if relevant_swaps.iloc[s]['virtual_liquidity'] < 1e-9:
-                        fraction_fees_earned_position = 1
-                    else:
-                        fraction_fees_earned_position = self.liquidity_ranges[i]['position_liquidity']/(self.liquidity_ranges[i]['position_liquidity'] + relevant_swaps.iloc[s]['virtual_liquidity'])
-
-                    fees_earned_token_0 += in_range * token_0_in     * self.fee_tier * fraction_fees_earned_position * relevant_swaps.iloc[s]['traded_in']
-                    fees_earned_token_1 += in_range * (1-token_0_in) * self.fee_tier * fraction_fees_earned_position * relevant_swaps.iloc[s]['traded_in']
-        
+                    fraction_fees_earned_position = 1 if relevant_swaps.iloc[s]['virtual_liquidity'] < 1e-9 else \
+                        self.liquidity_ranges[i]['position_liquidity'] / (self.liquidity_ranges[i]['position_liquidity'] + relevant_swaps.iloc[s]['virtual_liquidity'])
+                    fees_earned_token_0 += in_range * token_0_in * self.fee_tier * fraction_fees_earned_position * relevant_swaps.iloc[s]['traded_in']
+                    fees_earned_token_1 += in_range * (1 - token_0_in) * self.fee_tier * fraction_fees_earned_position * relevant_swaps.iloc[s]['traded_in']
         self.token_0_fees_uncollected += fees_earned_token_0
         self.token_1_fees_uncollected += fees_earned_token_1
-        
-        return fees_earned_token_0,fees_earned_token_1            
-     
-    ########################################################
-    # Rebalance: Remove all liquidity positions
-    # Not dependent on strategy
-    ########################################################   
+        return fees_earned_token_0, fees_earned_token_1
+
     def remove_liquidity(self):
-    
-        removed_amount_0    = 0.0
-        removed_amount_1    = 0.0
-        
-        # For every bin, get the amounts you currently have and withdraw
+        removed_amount_0 = 0.0
+        removed_amount_1 = 0.0
         for i in range(len(self.liquidity_ranges)):
-            
             position_liquidity = self.liquidity_ranges[i]['position_liquidity']
-           
-            TICK_A             = self.liquidity_ranges[i]['lower_bin_tick']
-            TICK_B             = self.liquidity_ranges[i]['upper_bin_tick']
-            
-            token_amounts      = UNI_v3_funcs.get_amounts(self.price_tick,TICK_A,TICK_B,
-                                                     position_liquidity,self.decimals_0,self.decimals_1)   
-            removed_amount_0   += token_amounts[0]
-            removed_amount_1   += token_amounts[1]
-        
+            TICK_A = self.liquidity_ranges[i]['lower_bin_tick']
+            TICK_B = self.liquidity_ranges[i]['upper_bin_tick']
+            token_amounts = UNI_v3_funcs.get_amounts(self.price_tick, TICK_A, TICK_B,
+                                                     position_liquidity, self.decimals_0, self.decimals_1)
+            removed_amount_0 += token_amounts[0]
+            removed_amount_1 += token_amounts[1]
         self.liquidity_in_0 = removed_amount_0 + self.token_0_left_over + self.token_0_fees_uncollected
         self.liquidity_in_1 = removed_amount_1 + self.token_1_left_over + self.token_1_fees_uncollected
-        
         self.token_0_left_over = 0.0
         self.token_1_left_over = 0.0
-        
         self.token_0_fees_uncollected = 0.0
         self.token_1_fees_uncollected = 0.0
-        
-   
-########################################################
-# Simulate strategy using a pandas Series called price_data, which has as an index
-# the time point, and contains the pool price (token 1 per token 0) 
-########################################################
 
-def simulate_strategy(price_data,swap_data,strategy_in,
-                       liquidity_in_0,liquidity_in_1,fee_tier,decimals_0,decimals_1):
+def simulate_strategy(price_data, swap_data, strategy_in, liquidity_in_0, liquidity_in_1, fee_tier, decimals_0, decimals_1, token_0_usd_data=None):
+    strategy_results = []
+    if token_0_usd_data is not None:
+        token_0_usd_data = token_0_usd_data.sort_index()
+        price_data_with_usd = pd.merge_asof(price_data.to_frame(name='price'), token_0_usd_data[['quotePrice']],
+                                            left_index=True, right_index=True, direction='backward')
+        price_data_with_usd = price_data_with_usd.rename(columns={'quotePrice': 'price_0_usd'})
+    else:
+        price_data_with_usd = price_data.to_frame(name='price')
+        price_data_with_usd['price_0_usd'] = None
 
-    strategy_results = []    
-  
-    # Go through every time period in the data that was passet
-    for i in range(len(price_data)): 
-        # Strategy Initialization
+    for i in range(len(price_data)):
+        price_0_usd = price_data_with_usd.iloc[i]['price_0_usd'] if 'price_0_usd' in price_data_with_usd.columns else None
         if i == 0:
-            strategy_results.append(StrategyObservation(price_data.index[i],
-                                              price_data[i],
-                                              strategy_in,
-                                              liquidity_in_0,liquidity_in_1,
-                                              fee_tier,decimals_0,decimals_1))
-        # After initialization
+            strategy_results.append(StrategyObservation(price_data.index[i], price_data[i], strategy_in,
+                                                        liquidity_in_0, liquidity_in_1, fee_tier, decimals_0, decimals_1,
+                                                        price_0_usd=price_0_usd))
         else:
-            
             relevant_swaps = swap_data[price_data.index[i-1]:price_data.index[i]]
-            strategy_results.append(StrategyObservation(price_data.index[i],
-                                              price_data[i],
-                                              strategy_in,
-                                              strategy_results[i-1].liquidity_in_0,
-                                              strategy_results[i-1].liquidity_in_1,
-                                              strategy_results[i-1].fee_tier,
-                                              strategy_results[i-1].decimals_0,
-                                              strategy_results[i-1].decimals_1,
-                                              strategy_results[i-1].token_0_left_over,
-                                              strategy_results[i-1].token_1_left_over,
-                                              strategy_results[i-1].token_0_fees_uncollected,
-                                              strategy_results[i-1].token_1_fees_uncollected,
-                                              strategy_results[i-1].liquidity_ranges,
-                                              strategy_results[i-1].strategy_info,
-                                              relevant_swaps))
-            
+            strategy_results.append(StrategyObservation(price_data.index[i], price_data[i], strategy_in,
+                                                        strategy_results[i-1].liquidity_in_0,
+                                                        strategy_results[i-1].liquidity_in_1,
+                                                        strategy_results[i-1].fee_tier,
+                                                        strategy_results[i-1].decimals_0,
+                                                        strategy_results[i-1].decimals_1,
+                                                        strategy_results[i-1].token_0_left_over,
+                                                        strategy_results[i-1].token_1_left_over,
+                                                        strategy_results[i-1].token_0_fees_uncollected,
+                                                        strategy_results[i-1].token_1_fees_uncollected,
+                                                        strategy_results[i-1].liquidity_ranges,
+                                                        strategy_results[i-1].strategy_info,
+                                                        relevant_swaps, price_0_usd=price_0_usd))
     return strategy_results
 
-########################################################
-# Extract Strategy Data
-########################################################
-
-def generate_simulation_series(simulations,strategy_in,token_0_usd_data = None):
+def generate_simulation_series(simulations, strategy_in, token_0_usd_data=None):
+    data_strategy = pd.DataFrame([strategy_in.dict_components(i) for i in simulations])
+    data_strategy = data_strategy.set_index('time', drop=False)
+    data_strategy = data_strategy.sort_index()
     
-    # token_0_usd_data has in quotePrice 
-    # token_0 / usd value for each index
-    
-    data_strategy                    = pd.DataFrame([strategy_in.dict_components(i) for i in simulations])
-    data_strategy                    = data_strategy.set_index('time',drop=False)
-    data_strategy                    = data_strategy.sort_index()
-    
-    token_0_initial                  = simulations[0].liquidity_ranges[0]['token_0'] + simulations[0].liquidity_ranges[1]['token_0'] + simulations[0].token_0_left_over
-    token_1_initial                  = simulations[0].liquidity_ranges[0]['token_1'] + simulations[0].liquidity_ranges[1]['token_1'] + simulations[0].token_1_left_over
+    token_0_initial = simulations[0].liquidity_ranges[0]['token_0'] + simulations[0].liquidity_ranges[1]['token_0'] + simulations[0].token_0_left_over
+    token_1_initial = simulations[0].liquidity_ranges[0]['token_1'] + simulations[0].liquidity_ranges[1]['token_1'] + simulations[0].token_1_left_over
     
     if token_0_usd_data is None:
-        data_strategy['value_position_usd']       = data_strategy['value_position_in_token_0']
-        data_strategy['base_position_value_usd']  = data_strategy['base_position_value_in_token_0']
+        data_strategy['value_position_usd'] = data_strategy['value_position_in_token_0']
+        data_strategy['base_position_value_usd'] = data_strategy['base_position_value_in_token_0']
         data_strategy['limit_position_value_usd'] = data_strategy['limit_position_value_in_token_0']
-        data_strategy['cum_fees_usd']             = data_strategy['token_0_fees'].cumsum() + (data_strategy['token_1_fees'] / data_strategy['price']).cumsum()
-        data_strategy['token_0_hold_usd']         = token_0_initial
-        data_strategy['token_1_hold_usd']         = token_1_initial / data_strategy['price']
-        data_strategy['value_hold_usd']           = data_strategy['token_0_hold_usd'] + data_strategy['token_1_hold_usd']
+        data_strategy['cum_fees_usd'] = data_strategy['token_0_fees'].cumsum() + (data_strategy['token_1_fees'] / data_strategy['price']).cumsum()
+        data_strategy['token_0_hold_usd'] = token_0_initial
+        data_strategy['token_1_hold_usd'] = token_1_initial / data_strategy['price']
+        data_strategy['value_hold_usd'] = data_strategy['token_0_hold_usd'] + data_strategy['token_1_hold_usd']
         data_return = data_strategy
     else:
-        # Merge in usd price data
-        token_0_usd_data['price_0_usd']         = token_0_usd_data['quotePrice']
-        token_0_usd_data['time_pd']             = token_0_usd_data.index
-        token_0_usd_data                        = token_0_usd_data.set_index('time_pd').sort_index()
+        token_0_usd_data['price_0_usd'] = token_0_usd_data['quotePrice']
+        token_0_usd_data['time_pd'] = token_0_usd_data.index
+        token_0_usd_data = token_0_usd_data.set_index('time_pd').sort_index()
         
-        data_strategy['time_pd']                = pd.to_datetime(data_strategy['time'],utc=True)
-        data_strategy                           = data_strategy.set_index('time_pd').sort_index()
-        data_return                             = pd.merge_asof(data_strategy,token_0_usd_data['price_0_usd'],on='time_pd',direction='backward',allow_exact_matches = True)
+        data_strategy['time_pd'] = pd.to_datetime(data_strategy['time'], utc=True)
+        data_strategy = data_strategy.set_index('time_pd').sort_index()
+        data_return = pd.merge_asof(data_strategy, token_0_usd_data['price_0_usd'], on='time_pd', direction='backward', allow_exact_matches=True)
         
-        # Generate usd position values
-        data_return['value_position_usd']       = data_return['value_position_in_token_0']*data_return['price_0_usd']
-        data_return['base_position_value_usd']  = data_return['base_position_value_in_token_0']*data_return['price_0_usd']
-        data_return['limit_position_value_usd'] = data_return['limit_position_value_in_token_0']*data_return['price_0_usd']
-        data_return['cum_fees_0']               = data_return['token_0_fees'].cumsum() + (data_return['token_1_fees'] / data_return['price']).cumsum()
-        data_return['cum_fees_usd']             = data_return['cum_fees_0']*data_return['price_0_usd']
-        data_return['token_0_hold_usd']         = token_0_initial * data_return['price_0_usd']
-        data_return['token_1_hold_usd']         = token_1_initial * data_return['price_0_usd'] / data_return['price']
-        data_return['value_hold_usd']           = data_return['token_0_hold_usd'] + data_return['token_1_hold_usd']
+        data_return['value_position_usd'] = data_return['value_position_in_token_0'] * data_return['price_0_usd']
+        data_return['base_position_value_usd'] = data_return['base_position_value_in_token_0'] * data_return['price_0_usd']
+        data_return['limit_position_value_usd'] = data_return['limit_position_value_in_token_0'] * data_return['price_0_usd']
+        data_return['cum_fees_0'] = data_return['token_0_fees'].cumsum() + (data_return['token_1_fees'] / data_return['price']).cumsum()
+        data_return['cum_fees_usd'] = data_return['cum_fees_0'] * data_return['price_0_usd']
+        data_return['token_0_hold_usd'] = token_0_initial * data_return['price_0_usd']
+        data_return['token_1_hold_usd'] = token_1_initial * data_return['price_0_usd'] / data_return['price']
+        data_return['value_hold_usd'] = data_return['token_0_hold_usd'] + data_return['token_1_hold_usd']
         
     return data_return
+
 
 
 ########################################################

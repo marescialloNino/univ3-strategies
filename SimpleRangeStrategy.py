@@ -14,10 +14,10 @@ class SimpleRangeStrategy:
         self.width = width
 
     def set_liquidity_ranges(self, current_strat_obs, model_forecast=None):
-        """Set the liquidity range based on the current price and width.
+        """Set the liquidity range based on the current price and width, adjusting tokens to 50/50 USD value.
         
         Args:
-            current_strat_obs: Current StrategyObservation object.
+            current_strat_obs: Current StrategyObservation object with price_0_usd.
             model_forecast: Not used in this strategy, included for compatibility.
         
         Returns:
@@ -37,7 +37,24 @@ class SimpleRangeStrategy:
         if TICK_A >= TICK_B:
             TICK_A = TICK_B - current_strat_obs.tickSpacing
 
-        # Calculate liquidity
+        # Adjust tokens to 50/50 USD value split if price_0_usd is available
+        if hasattr(current_strat_obs, 'price_0_usd') and current_strat_obs.price_0_usd is not None:
+            price_token0_usd = current_strat_obs.price_0_usd
+            price_token1_usd = price_token0_usd / current_strat_obs.price  # price = token_1 / token_0
+            value_0 = current_strat_obs.liquidity_in_0 * price_token0_usd
+            value_1 = current_strat_obs.liquidity_in_1 * price_token1_usd
+            total_value = value_0 + value_1
+            target_value = total_value / 2
+            delta_0 = (value_0 - value_1) / (2 * price_token0_usd)  # Amount of token_0 to swap
+            adjusted_0 = current_strat_obs.liquidity_in_0 - delta_0
+            adjusted_1 = current_strat_obs.liquidity_in_1 + (delta_0 * current_strat_obs.price)
+            # Ensure non-negative amounts
+            current_strat_obs.liquidity_in_0 = max(adjusted_0, 0)
+            current_strat_obs.liquidity_in_1 = max(adjusted_1, 0)
+        else:
+            print("Warning: price_0_usd not available, skipping 50/50 adjustment")
+
+        # Calculate liquidity with adjusted amounts
         liquidity_placed = int(UNI_v3_funcs.get_liquidity(
             current_strat_obs.price_tick_current, TICK_A, TICK_B,
             current_strat_obs.liquidity_in_0, current_strat_obs.liquidity_in_1,
@@ -49,6 +66,12 @@ class SimpleRangeStrategy:
             current_strat_obs.price_tick_current, TICK_A, TICK_B,
             liquidity_placed, current_strat_obs.decimals_0, current_strat_obs.decimals_1
         )
+
+        # Update leftover tokens
+        current_strat_obs.token_0_left_over = max([current_strat_obs.liquidity_in_0 - amount_0_placed, 0.0])
+        current_strat_obs.token_1_left_over = max([current_strat_obs.liquidity_in_1 - amount_1_placed, 0.0])
+        current_strat_obs.liquidity_in_0 = 0.0
+        current_strat_obs.liquidity_in_1 = 0.0
 
         # Set actual prices for plotting
         lower_bin_price = (1.0001 ** TICK_A) / current_strat_obs.decimal_adjustment
@@ -83,12 +106,6 @@ class SimpleRangeStrategy:
         }
 
         liquidity_ranges = [base_liq_range, dummy_liq_range]
-
-        # Update leftover tokens
-        current_strat_obs.token_0_left_over = max([current_strat_obs.liquidity_in_0 - amount_0_placed, 0.0])
-        current_strat_obs.token_1_left_over = max([current_strat_obs.liquidity_in_1 - amount_1_placed, 0.0])
-        current_strat_obs.liquidity_in_0 = 0.0
-        current_strat_obs.liquidity_in_1 = 0.0
 
         # Set strategy_info
         if current_strat_obs.strategy_info is None:
@@ -174,3 +191,4 @@ class SimpleRangeStrategy:
                                                         strategy_observation.liquidity_ranges[1]['token_1'] / this_data['price'])
 
         return this_data
+
