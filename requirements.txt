@@ -1,0 +1,29 @@
+# Core data science and numerical computing packages
+pandas>=1.5.0
+numpy>=1.21.0
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Jupyter notebook and interactive computing
+jupyter>=1.0.0
+notebook>=6.4.0
+ipykernel>=6.0.0
+
+# Google Cloud and BigQuery packages
+google-cloud-bigquery>=3.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=0.4.0
+google-auth-httplib2>=0.1.0
+
+# HTTP requests and API handling
+requests>=2.25.0
+urllib3>=1.26.0
+
+# Date and time handling
+python-dateutil>=2.8.0
+pytz>=2021.0
+
+# Data serialization and file handling
+pickle5>=0.0.11; python_version<"3.8"
+
+

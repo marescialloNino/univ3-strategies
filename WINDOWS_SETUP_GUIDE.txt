@@ -63,19 +63,15 @@ with minimal global installations and everything else in virtual environments.
 4.1 UPGRADE PIP
    python -m pip install --upgrade pip
 
-4.2 INSTALL CORE PACKAGES
+4.2 INSTALL ALL PACKAGES AT ONCE (RECOMMENDED)
+   pip install -r requirements.txt
+
+4.3 ALTERNATIVE: INSTALL PACKAGES INDIVIDUALLY
    pip install pandas numpy matplotlib seaborn jupyter
-
-4.3 INSTALL GOOGLE CLOUD PACKAGES
    pip install google-cloud-bigquery google-auth
-
-4.4 INSTALL OTHER DEPENDENCIES
    pip install requests python-dateutil
 
-4.5 INSTALL JUPYTER NOTEBOOK
-   pip install notebook
-
-4.6 VERIFY INSTALLATIONS
+4.4 VERIFY INSTALLATIONS
    pip list
 
 ================================================================================
