@@ -1,0 +1,284 @@
+================================================================================
+                    UNIV3-STRATEGIES PROJECT SETUP GUIDE
+                           FOR WINDOWS PC
+================================================================================
+
+This guide will help you set up the univ3-strategies project on a Windows PC
+with minimal global installations and everything else in virtual environments.
+
+================================================================================
+                            STEP 1: GLOBAL INSTALLATIONS
+================================================================================
+
+1.1 INSTALL PYTHON
+   - Go to https://www.python.org/downloads/
+   - Download Python 3.10 or 3.11 (Windows installer)
+   - Run installer as Administrator
+   - IMPORTANT: Check "Add Python to PATH" during installation
+   - Verify: Open Command Prompt and run: python --version
+
+1.2 INSTALL GIT
+   - Go to https://git-scm.com/download/win
+   - Download and install with default settings
+   - Verify: git --version
+
+1.3 INSTALL VS CODE (OPTIONAL BUT RECOMMENDED)
+   - Go to https://code.visualstudio.com/
+   - Download and install with default settings
+
+================================================================================
+                            STEP 2: CLONE PROJECT
+================================================================================
+
+2.1 OPEN COMMAND PROMPT AS ADMINISTRATOR
+   - Press Windows + R, type "cmd", press Ctrl + Shift + Enter
+
+2.2 NAVIGATE TO DOCUMENTS FOLDER
+   cd C:\Users\[YourUsername]\Documents
+
+2.3 CLONE THE PROJECT
+   git clone https://github.com/[your-username]/univ3-strategies.git
+   cd univ3-strategies
+
+================================================================================
+                            STEP 3: VIRTUAL ENVIRONMENT
+================================================================================
+
+3.1 CREATE VIRTUAL ENVIRONMENT
+   python -m venv venv
+
+3.2 ACTIVATE VIRTUAL ENVIRONMENT
+   venv\Scripts\activate
+   
+   Note: You should see (venv) at the beginning of your command line
+
+3.3 VERIFY ACTIVATION
+   where python
+   (Should show path to your venv folder)
+
+================================================================================
+                            STEP 4: INSTALL PACKAGES
+================================================================================
+
+4.1 UPGRADE PIP
+   python -m pip install --upgrade pip
+
+4.2 INSTALL CORE PACKAGES
+   pip install pandas numpy matplotlib seaborn jupyter
+
+4.3 INSTALL GOOGLE CLOUD PACKAGES
+   pip install google-cloud-bigquery google-auth
+
+4.4 INSTALL OTHER DEPENDENCIES
+   pip install requests python-dateutil
+
+4.5 INSTALL JUPYTER NOTEBOOK
+   pip install notebook
+
+4.6 VERIFY INSTALLATIONS
+   pip list
+
+================================================================================
+                            STEP 5: GOOGLE CLOUD SETUP
+================================================================================
+
+5.1 COPY AUTH KEY
+   - Copy your auth_key.json file to the project directory
+   - Or download it fresh from Google Cloud Console
+
+5.2 SET ENVIRONMENT VARIABLE
+   set GOOGLE_APPLICATION_CREDENTIALS=C:\Users\[YourUsername]\Documents\univ3-strategies\auth_key.json
+
+   Note: Replace [YourUsername] with your actual Windows username
+
+================================================================================
+                            STEP 6: TEST INSTALLATION
+================================================================================
+
+6.1 TEST BASIC IMPORTS
+   python -c "import pandas as pd; import numpy as np; print('Basic imports successful!')"
+
+6.2 TEST GOOGLE CLOUD
+   python -c "from google.cloud import bigquery; print('Google Cloud import successful!')"
+
+6.3 TEST PROJECT IMPORTS
+   python -c "from GetPoolData import get_pool_data_bigquery; print('Project imports successful!')"
+
+================================================================================
+                            STEP 7: LAUNCH JUPYTER
+================================================================================
+
+7.1 MAKE SURE VIRTUAL ENVIRONMENT IS ACTIVATED
+   venv\Scripts\activate
+
+7.2 LAUNCH JUPYTER NOTEBOOK
+   jupyter notebook
+
+7.3 BROWSER WILL OPEN
+   - Navigate to your project folder
+   - Open 6_PoolDataDownloader.ipynb
+   - Test the first few cells
+
+================================================================================
+                            STEP 8: EASY ACTIVATION SCRIPT
+================================================================================
+
+8.1 CREATE BATCH FILE
+   Create a file called "activate_env.bat" in your project directory with this content:
+
+   @echo off
+   cd /d "%~dp0"
+   call venv\Scripts\activate
+   jupyter notebook
+   pause
+
+8.2 USE THE SCRIPT
+   - Double-click activate_env.bat to activate environment and launch Jupyter
+   - No need to manually type commands each time
+
+================================================================================
+                            STEP 9: VS CODE SETUP (OPTIONAL)
+================================================================================
+
+9.1 INSTALL EXTENSIONS
+   - Python extension by Microsoft
+   - Jupyter extension by Microsoft
+   - Git Graph extension
+
+9.2 OPEN PROJECT IN VS CODE
+   - Open VS Code
+   - File -> Open Folder -> Select your project folder
+   - Select Python interpreter from venv
+
+================================================================================
+                            STEP 10: ALTERNATIVE - CONDA
+================================================================================
+
+If you prefer Conda (often more reliable on Windows):
+
+10.1 INSTALL MINICONDA
+    - Download from: https://docs.conda.io/en/latest/miniconda.html
+    - Install with default settings
+
+10.2 CREATE ENVIRONMENT
+    conda create -n univ3 python=3.10
+
+10.3 ACTIVATE
+    conda activate univ3
+
+10.4 INSTALL PACKAGES
+    conda install -c conda-forge pandas numpy matplotlib jupyter google-cloud-bigquery
+
+================================================================================
+                            TROUBLESHOOTING
+================================================================================
+
+T1. PYTHON NOT FOUND
+   - Reinstall Python and make sure "Add to PATH" is checked
+   - Restart Command Prompt after installation
+
+T2. VIRTUAL ENVIRONMENT NOT ACTIVATING
+   - Make sure you're in the right directory
+   - Try: venv\Scripts\activate.bat
+
+T3. PACKAGE INSTALLATION FAILS
+   - Make sure virtual environment is activated
+   - Try: pip install --upgrade pip
+   - Check internet connection
+
+T4. GOOGLE CLOUD AUTHENTICATION FAILS
+   - Verify auth_key.json path is correct
+   - Check file permissions
+   - Verify Google Cloud project is active
+
+T5. JUPYTER NOT FOUND
+   - Make sure virtual environment is activated
+   - Try: pip install jupyter notebook
+
+================================================================================
+                            USEFUL COMMANDS
+================================================================================
+
+# Check Python version
+python --version
+
+# Check pip version
+pip --version
+
+# List installed packages
+pip list
+
+# Check Python path
+where python
+
+# Deactivate virtual environment
+deactivate
+
+# Remove and recreate virtual environment
+deactivate
+rmdir /s venv
+python -m venv venv
+venv\Scripts\activate
+
+# Check environment variables
+echo %GOOGLE_APPLICATION_CREDENTIALS%
+
+# Update packages
+pip install --upgrade package_name
+
+================================================================================
+                            FINAL VERIFICATION
+================================================================================
+
+After completing all steps, you should be able to:
+
+1. Open Command Prompt and navigate to your project
+2. Activate virtual environment: venv\Scripts\activate
+3. Launch Jupyter: jupyter notebook
+4. Open 6_PoolDataDownloader.ipynb
+5. Run the first few cells successfully
+6. See no import errors
+
+================================================================================
+                            PROJECT STRUCTURE
+================================================================================
+
+Your project folder should look like this:
+
+C:\Users\[YourUsername]\Documents\univ3-strategies\
+├── venv\                          # Virtual environment
+├── data\                          # Data directory
+├── *.py                           # Python files
+├── *.ipynb                        # Jupyter notebooks
+├── auth_key.json                  # Google Cloud credentials
+├── config.py                      # Configuration
+├── activate_env.bat               # Easy activation script
+└── WINDOWS_SETUP_GUIDE.txt        # This file
+
+================================================================================
+                            SUPPORT
+================================================================================
+
+If you encounter issues:
+1. Check that virtual environment is activated (venv\Scripts\activate)
+2. Verify all packages are installed (pip list)
+3. Check Python path (where python)
+4. Ensure auth_key.json is in the right location
+5. Restart Command Prompt if needed
+
+================================================================================
+                            NOTES
+================================================================================
+
+- Always activate virtual environment before working on the project
+- Keep your auth_key.json secure and don't commit it to git
+- Use the activate_env.bat file for easy access
+- The virtual environment keeps your global Python clean
+- You can have multiple virtual environments for different projects
+
+================================================================================
+                            END OF GUIDE
+================================================================================
+
+Good luck with your setup! The virtual environment approach will keep your
+system clean while giving you everything you need for the project.
