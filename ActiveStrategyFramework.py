@@ -690,9 +690,9 @@ def compute_hedge_series(data_strategy: pd.DataFrame,
                     realized1 += (avg1 - price1) * close1
                     qty1 = target1
 
-        # Unrealized PnL at current prices (short)
-        unreal0 = (avg0 - price0) * qty0 if not np.isnan(price0) else 0.0
-        unreal1 = (avg1 - price1) * qty1 if not np.isnan(price1) else 0.0
+        # Unrealized PnL at current prices (short): |qty| * (avg_entry - current_price)
+        unreal0 = (avg0 - price0) * abs(qty0) if not np.isnan(price0) else 0.0
+        unreal1 = (avg1 - price1) * abs(qty1) if not np.isnan(price1) else 0.0
 
         # Mark-to-market hedge value (short -> negative value)
         hedge_value = 0.0
