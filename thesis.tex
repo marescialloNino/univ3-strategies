@@ -1,0 +1,1563 @@
+\documentclass{article}
+\usepackage{subcaption}
+\usepackage{amsmath}  % If not already included, for equations
+\usepackage{graphicx}  % For including imagesp
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{changepage}
+
+
+
+
+\title{Hedging of Exotic Pairs in Uniswap v3 type LP}
+\author{Nicola Schiavo}
+\date{\today}
+\begin{document}
+\maketitle
+\newpage
+\begin{abstract}
+This thesis introduces and evaluates a dynamic hedging framework designed specifically for liquidity provider (LP) positions in decentralized exchanges (DEXs), with a focus on exotic token pairs. Exotic pairs, characterized by low liquidity and high volatility, pose different challenges to LP providers, since the numeraire itself is a volatile asset. 
+This analysis considers perpetual swaps as a hedging instrument and builds a parallel between classical options and particular types of LP positions, allowing us to view providing liquidity as selling perpetual options, derivative instruments that allow for indefinite holding without expiration.
+These instruments can be used to hedge against impermanent loss (IL), the primary risk in which the value of pooled assets diverges unfavorably from holding them separately.
+
+The core objective is to construct market-neutral strategies that isolate and capture the fee income generated from liquidity provision while neutralizing directional market exposures. We develop mathematical models to dynamically adjust hedge ratios based on real-time price movements, incorporating techniques like delta hedging for basic volatility management and exploring more advanced options-inspired approaches for handling non-linear risks.
+
+To assess the framework's effectiveness, we conduct extensive simulations using historical DeFi data from the blockchain, alongside empirical backtesting with real-world token pairs involving exotic assets. Performance is evaluated across various metrics, including risk-adjusted returns (e.g., Sharpe ratio), IL reduction percentages, and overall yield stability under different market conditions such as bull runs, bear markets, and high-volatility periods.
+
+\end{abstract}
+\newpage
+\section*{Acknowledgments}  
+\addcontentsline{toc}{section}{Acknowledgments}  % Optional: Adds it to the TOC; change to "Ringraziamenti" if needed
+
+% Your acknowledgments text here. For example:
+I would like to express my sincere gratitude to my supervisor, Professor Grasselli, for their invaluable guidance and support throughout this research, and to my former Professor Christian Marzolin for guiding and inspiring me through the intricacy of Cryptocurrencies and AMMs technology for the first time.\newline
+Special thanks to my family, F. and G. for their encouragement and support through the university years.
+
+\newpage  % Optional: If you want a page break after acknowledgments
+
+\tableofcontents
+\newpage
+
+
+
+\section{Introduction}
+Since the inception of Bitcoin in 2008 \cite{bitcoin} and later Ethereum in 2014 \cite{ethereum}, the capabilities of blockchains have significantly evolved. Most notably, the introduction of smart contracts by Ethereum enabled the blockchain to host an entire financial system commonly known as decentralized finance (DeFi). DeFi has shifted the widespread perception of cryptocurrencies being a tool for price speculation to a technology with the potential to revolutionize the future of finance.
+
+Decentralised Exchanges (DEXes) play a fundamental role in the blockchain ecosystem by allowing users
+to swap digital assets. 
+The functioning of DEXes requires liquidity providers who put their
+liquidity in the liquidity pools, so that traders can use these pools for buying and selling tokens.
+The Automated Market Making (AMM) protocol is a mechanism for settling buy and sell orders at
+DEXes. An AMM protocol is characterized by a constant function market maker (CFMM) which
+assigns buy and sell prices for given orders using order sizes and current liquidity of a pool. Uniswap
+V3 (Adams et al. (2021) \cite{univ3}) is the most widely employed CFMM which is adopted by many DEXes,
+in addition to Uniswap DEX itself. Uniswap V2 (Adams et al. (2020) \cite{univ2}) is an earlier AMM protocol
+employing a constant product CFMM which is less capital efficient than V3 CFMM. Uniswap V2
+is still in use for old altcoins pools. It's worth noting that in the second half of year 2024, Uniswap development team has launched Uniswap V4 (Adams et al. (2023)  \cite{univ4}) AMM which
+has the same CFMM as Uniswap V3 so the analysis will be directly applicable to Uniswap V4 pools.
+
+For details of the design of various CFMMs, see among others Angeris et al. (2019) \cite{angeris2019}, Lipton-Treccani (2021) \cite{liptontreccani2021}, Park et al. (2023) \cite{park2023}, Lehar-Parlour (2024) \cite{lehar2024}.
+
+Uniswap V3 protocol allows liquidity providers to concentrate liquidity in specified ranges. As
+a result, the liquidity of the pool can be increased in certain ranges (typically around the current
+price) and the potential to generate more trading fees from the LP is increased accordingly.
+However, this concentration introduces new difficulties, as positions become sensitive to price movements outside the chosen range, leading to potential full exposure to one asset and heightened impermanent loss. These dynamics require active and sophisticated management of positions, including frequent rebalancing and monitoring, which pose additional challenges for LPs, particularly in volatile or low-liquidity markets.
+
+It's important to note that Defi is still a relatively new, unexplored and profoundly innovative market, the profitability of providing liquidity is largely debated, see among others Park et al. (2023) \cite{park2023}, Evans (2020) \cite{evans2020}, Heimbach et al. (2022) \cite{heimbach2022}, Pintail blog post \cite{pintail2021}. \newline  
+A liquidity provider provides liquidity to a specific range using initial amount of Token X and Token Y tokens as specified by Uniswap V3 CFMM. When the price of Token X falls, traders use the pool to swap Token Y by depositing
+Token X, so that the LP accrues more units of Token X. Thus when Token X falls persistently, the liquidity
+provider ends up holding more units of the depreciating asset, which is similar to being short a put
+option. In opposite, when Token X price increases, traders will deplete Token X reserves from the pool by
+depositing Token Y tokens. Thus, the liquidity provider ends up holding less units of the appreciating
+asset, which is similar to being short a call option. The combined effect of increasing / decreasing
+the exposure to depreciating / appreciating asset leads to what is known as the impermanent loss in Decentralised Finance applications.
+The mechanism behind the impermanent loss of LPs is similar to being short a
+portfolio of call and put options. Accordingly, we can try to apply well-developed methods from financial
+engineering for designing the valuation and risk management of LPs using static and dynamic
+methods for valuation and risk-management of derivative securities. 
+
+This approach may represent a paradigm shift in financial markets by bridging traditional hedging techniques from centralized finance with the decentralized, permissionless nature of DeFi. By enabling sophisticated risk management for LP positions it could attract institutional participation, improve overall market liquidity, and inspire innovation in on-chain financial products. 
+Ultimately, such integration might democratize access to advanced derivatives strategies, fostering a more resilient and efficient global financial ecosystem while reducing barriers for retail participants in blockchain-based trading.
+\newpage
+\section{Related Work}
+Several studies have examined the risks and returns associated with liquidity provision in automated market makers, particularly in the context of Uniswap protocols and many have approached the problem of Impermanent Loss hedging.\newline
+Evans \cite{evans2020} explores how liquidity providers can replicate various trading strategies and financial derivatives through their positions, while Evans et al. \cite{evans2021} analyze optimal transaction fees to attract liquidity. These works primarily focus on the constant product market maker in Uniswap V2, providing foundational insights into the economic incentives for LPs.\newline
+Heimbach et al. \cite{heimbach2022} offer an empirical analysis of Uniswap V2 and V3 liquidity providers, highlighting how pool performance is driven by price volatility and presenting general risk-return metrics. Their findings underscore the challenges in less volatile pairs, and goes on to underline a strong correlation between pool assets volatility and LP performance, suggesting unprofitability of LPing for exotic pairs, at least for the vast majority of partecipants.\newline
+Neuder et al. \cite{neuder2021} investigate strategic liquidity provision in Uniswap V3, evaluating classes of strategies for LPs, but their analysis relies on simplifying assumptions that overlook significant price-driven losses. \newline
+In a series of blog posts, Lambert \cite{lambert2021_optimal_liquidity}, \cite{
+lambert2021_pricing_lp} discusses challenges in Uniswap V3 liquidity provision and links positions to financial derivatives, but relies on simplifications that may not hold in real data.\newline
+A report by Loesch et al. \cite{loesch2021} analyzes real Uniswap V3 positions, concluding that many are unprofitable due to impermanent loss, but limits its scope to position lifetime without considering broader factors like market regimes or hedging. \newline
+This study attempts to address these gaps by developing a comprehensive framework that isolates fee income through dynamic hedging, using historical DeFi data for empirical validation.\newline
+Recent works on hedging impermanent loss provide additional context. Lipton et al. \cite{lipton2024} propose unified static and dynamic approaches for hedging IL in Uniswap V3, including model-independent replication with vanilla options and model-dependent valuation under stochastic volatility.
+Other similar replication strategies are presented by Clark \cite{clark2020}.\newline
+Fukasawa et al. \cite{Fukasawa2022} explore hedging with variance and gamma swaps for Uniswap V2, extended by Lipton \cite{lipton2024} under the Heston model.\newline
+Overall, while existing literature provides valuable insights into LP risks and basic hedging,  this work tries to address concretely and empirically exotic pairs in Uniswap V3, bridging traditional options theory with DeFi through perpetual instruments and simulations.
+
+\section{Decentralized Exchanges and Liquidity Provision}
+\subsection{Traditional Order Book Exchanges}
+In traditional financial markets, exchanges typically operate using an order book mechanism. This system, common in centralized exchanges (CEXs) like the New York Stock Exchange or Binance for cryptocurrencies, matches buy and sell orders from market participants. Buyers submit bids specifying the price they are willing to pay and the quantity they want, while sellers submit asks with the price they demand and the quantity offered.
+The order book lists these bids and asks in descending and ascending order, respectively, creating a depth of market that shows available liquidity at different price levels. Trades occur when a buy order matches a sell order at the same price, or when a market order executes against the best available counterpart. 
+Market makers, often professional traders or firms, provide liquidity by placing limit orders on both sides, profiting from the bid-ask spread.
+This setup ensures price discovery through supply and demand, but it relies on active participation and can suffer from low liquidity in less popular assets, leading to wider spreads and slippage—where large orders move the price unfavorably.
+In the cryptocurrency markets, many CEXs like Coinbase or Kraken use similar order books, allowing for efficient trading. 
+However, these centralized systems hold user funds, which are relying in this third party to be in charge of their funds, introducing custody risks such as hacks or insolvency. 
+A notable example is the FTX collapse in 2022 \cite{ftx_collapse}, an exchange thought to be safe, with strict contact with regulators and US government agencies, which turned out to be a massive scam, and costing many users most of their funds. 
+Although more difficult from the user perspective, working in decentralized finance allows for total control and responsibility over the funds, no third parties are involved, and interacting with a smart contract is completely transparent, everyone can read the code and understand what it is doing, nobody can change that.
+
+\subsection{Automated Market Makers (AMMs)}
+
+Automated Market Makers (AMMs) represent a key innovation in decentralized finance (DeFi), shifting away from order books to algorithmic pricing via liquidity pools. In AMMs, trades execute against a pool of assets rather than matching individual orders, enabling permissionless, non-custodial trading on blockchains like Ethereum. The core idea is a mathematical function that determines prices based on the pool’s reserves. Liquidity providers (LPs) deposit token pairs into these pools, earning fees from trades proportional to their share. This democratizes market making—anyone can participate without needing sophisticated trading infrastructure. 
+
+AMMs differ from order books in several ways. First, they provide constant liquidity without needing continuous order placement; prices adjust automatically as trades alter reserves. Second, they eliminate order matching delays, offering instant execution, though blockchain congestion can add latency. Third, AMMs handle illiquid pairs better by incentivizing LPs with fees, but they introduce unique risks like impermanent loss (IL), where price changes reduce the value of deposited assets compared to holding them. 
+
+A prominent example is the constant product market maker (CPMM), which maintains a constant product of the reserves in the pool. For a pool between two tokens X and Y, the CPMM ensures that as trades occur, the state of the pool moves along a hyperbolic price curve, reflecting the trade-off between the two reserves. This setup allows for automatic pricing: the marginal price is determined by the ratio of the reserves, adjusting dynamically with each swap. Early implementations, such as Uniswap V2, apply liquidity uniformly across the entire price range from zero to infinity, which can lead to capital inefficiency as much of the liquidity remains unused unless prices move significantly.
+
+To address this, Uniswap V3 introduces concentrated liquidity, where LPs can specify price ranges for their contributions. This innovation aggregates liquidity in targeted intervals, often around the current price, enhancing capital efficiency and increasing potential fee generation. In V3, the CPMM incorporates virtual reserves to simulate deeper liquidity within the chosen range, effectively allowing swaps to occur as if the pool were larger until the range boundaries are reached. At that point, the internal price shifts to adjacent ticks, maintaining the mechanism's integrity. This design not only improves efficiency for stable or predictable pairs but also poses new challenges for volatile or exotic assets, where price movements can push the position out of range more frequently.
+
+Popular AMMs include Uniswap, SushiSwap, and Curve, each with variations in their pricing functions. For instance, Uniswap uses a constant product model, while Curve optimizes for stablecoin swaps with a different curve that minimizes slippage for assets expected to trade near parity. Overall, AMMs foster composability in DeFi, allowing pools to integrate with lending platforms or yield farms, but their deterministic pricing requires careful risk management, especially in innovative markets like exotics.
+\subsection{Challenges in Liquidity Provision}
+Providing liquidity in decentralized exchanges presents several challenges that differ from traditional markets. One primary issue is capital inefficiency: in early AMMs like Uniswap V2, liquidity spreads across all price ranges, meaning much of it sits idle, earning no fees unless prices move dramatically. This ties up capital without proportional returns. Another key challenge is impermanent loss (IL), discussed in detail later. IL occurs when asset prices diverge, causing the pool’s value to underperform compared to simply holding the assets. For volatile pairs, this can erase fee income or lead to outright losses, deterring participation.
+Gas fees on blockchains like Ethereum add operational costs. Depositing, withdrawing, or rebalancing liquidity incurs transaction fees, which can spike during network congestion, making frequent adjustments unprofitable for small LPs. Front-running and Miner Extractable Value (MEV) pose risks too. Malicious actors can exploit pending transactions, sandwiching trades to profit at LPs’ expense. Smart contract vulnerabilities, such as bugs in AMM code, have led to exploits draining pools. Regulatory uncertainty looms, with potential scrutiny on DeFi activities. Additionally, oracle risks—if price feeds are manipulated—can disrupt AMM pricing. Despite these hurdles, liquidity provision offers opportunities for yield in a low-interest environment, especially with strategies to mitigate risks. Advanced protocols like Uniswap V3 address some issues by allowing concentrated liquidity, but they demand more active management, as highlighted in studies like Heimbach et al. (2022) [6], which show varying performance based on pool volatility and LP strategies.
+Compared to traditional finance, where liquidity provision often involves regulated market makers with access to central clearing and insurance against defaults, DeFi introduces unique risks tied to its decentralized nature. In crypto, there's no central authority to recover lost funds from hacks or exploits, amplifying the impact of smart contract failures—events like the Ronin Network hack in 2022 highlight how billions can vanish without recourse. Traditional markets mitigate counterparty risk through institutions and regulations, but in DeFi, self-custody means users bear full responsibility for private key security; a single phishing attack can wipe out holdings.
+Volatility in crypto assets is typically much higher than in traditional pairs, exacerbating impermanent loss and making hedging more complex without established derivatives markets for many tokens. Regulatory risks are also more pronounced in DeFi, as evolving global policies—such as the EU's MiCA framework or U.S. SEC actions—could retroactively affect operations, whereas traditional finance operates under clearer, more stable rules. Oracle dependencies add another layer absent in traditional setups, where price data comes from trusted sources; in DeFi, manipulated oracles can lead to cascading failures, as seen in some flash loan attacks. These differences underscore the need for robust risk management in DeFi, blending financial engineering with blockchain-specific considerations to make liquidity provision viable.
+
+\subsection{Uniswap V2 Protocol}
+\begin{figure}
+\centering
+\includegraphics[width=0.4\columnwidth]{images/univ2.png}
+\caption{\footnotesize Illustration of CPMM function in Uniswap V2 }
+\label{fig:univ3}
+\end{figure}
+Here is an outline of the functioning of Uniswap V2, introduced in 2020.
+All the formulas ar directly obtained from the whitepaper of the protocol \cite{univ2}, with a slightly different notation to fit the following analysis.\newline
+The Uniswap V2 protocol uses a constant product market maker (CPMM) model for its AMM. For a pool with tokens X and Y, reserves $x$ and $y$ satisfy:
+$$x \cdot y = L^2,$$
+where $L$ is the liquidity parameter (often denoted as $\sqrt{k}$ in literature).
+The pool price $p$ (Y per X) is:
+$$p = \frac{y}{x}.$$
+Substituting yields reserves as functions of price:
+$$x = \frac{L}{\sqrt{p}}, \quad y = L \sqrt{p}.$$
+The LP value in Y units is:
+\begin{equation}
+    V_t^{(y)} = p_t x_t + y_t = 2L \sqrt{p_t}
+    \label{V_t_funded}
+\end{equation}
+
+Trades adjust reserves while keeping $L$ constant. For a trade of $\delta_x$ X for $\delta_y$ Y (ignoring gas fees):
+$$\delta_y = \frac{y (1-f) \delta_x}{x + (1-f) \delta_x},$$
+where $f$ is the fee tier of the pool, which is predefined at creation of the pool, and $f \in \{0.01\%, 0.05\%,0.3\%,1\%\}$ .\newline
+LPs earn proportional fees by providing liquidity, but face IL.
+Impermanent Loss is defined as:
+$$\text{IL}(p_t) = \frac{V_t - V_{\text{hold}}}{V_0},$$
+The specific form can vary for funded or borrowed positions, and there isn't a unique definition of impermanent loss, but it is always a measure of the opportunity cost of providing liquidity, how much are we losing with respect to the initial value, or to the value of holding the initial amount of assets? \newline
+For funded LP (initial value $V_0^{(y)} = 2L \sqrt{p_0}$):
+$$\text{IL}_{\text{funded}}(p_t) = \sqrt{\frac{p_t}{p_0}} - 1.$$
+For borrowed LP (hedged initial exposure) we can either borrow the tokens x to stake in the pool, or buy the tokens and immediately short sell the same amount of perpetual futures, so we must account for the short position in the total position value:
+
+\begin{equation}
+    V_{\text{borrowed}}^{(y)}(p_t) =  (p_t x_t + y_t) - (p_t - p_0)x_0.
+    \label{V_t_borrowed}
+\end{equation}
+
+
+$$\text{IL}_{\text{borrowed}}^{(y)}(p_t) = -\frac{1}{2} \left( \sqrt{\frac{p_t}{p_0}} - 1 \right)^2.$$
+Uniswap V2's uniform liquidity suits broad ranges but is inefficient for stable pairs, as much capital remains unused.
+
+
+
+\subsection{Uniswap V3 Protocol}
+\begin{figure}
+\centering
+\includegraphics[width=0.4\columnwidth]{images/univ3.png}
+\caption{\footnotesize Illustration of CPMM function in Uniswap V3 for liquidity in the price range $[p_l, p_u]$ }
+\label{fig:univ3}
+\end{figure}
+Here is an outline on the functioning of Uniswap V3, introduced in 2021. All the formmulas are directly obtained from the whitepaper \cite{univ3}.
+Uniswap V3, introduces concentrated liquidity to improve capital efficiency.\newline
+Liquidity deployed to a single-tick in Uniswap v3 is 1,774,544 more capital efficient than the corresponding Uniswap v2 (ie. Full Range) position. Even a more modest 40\% range  for a 0.3\% fee tier pool leads to a staggering 29,200-fold improvement in liquidity over the “Full range” option, as stated by Tienshaoku in \cite{tienshaoku}.\newline
+We will focus on V3 positions and notation from now on.\newline
+LPs specify price ranges $[p_{min}, p_{max}]$, focusing capital where trading occurs.
+The CPMM uses virtual reserves:
+$$x_v = x + \frac{L}{\sqrt{p_b}}, \quad y_v = y + L \sqrt{p_a},\quad x_v y_v = L^2$$
+
+This means that in a given range, swaps happens as if the liquidity deposited is equal to the virtual reserves, deeper than the real reserves, until the liquidity in the range is finished, the internal price of the pool changes to the next tick, where the same happens \newline.
+The price is:
+$$p = \frac{y_v}{x_v}.$$
+
+We can view these equations as two equations in four unkowns (x, y, L, p):
+
+$$ (x + \frac{L}{\sqrt{p_{max}}})(y + L \sqrt{p_{min}})= L^2$$
+$$ p_t =  \frac{(y + L \sqrt{p_{min}})}{(x + \frac{L}{\sqrt{p_{max}}})}$$
+
+The above equations have to hold at any point in time, with internal price p tracking an internal price observed on other trading venues within tight bounds due to arbitragers adjust pool reserves accordingly to eliminate arbitrage opportunities \cite{heimbach2022}.
+
+We work then under the assumption that the internal price of the pool $p_t$ approximates to a good degree the cross of the USD prices of the two tokens taken from a highly liquid exchanges, of course this is not always exactly true, but for time frames bigger then a few minutes this generally holds \cite{wang2022}: 
+
+\begin{equation}
+p_t =  \frac{(y + L \sqrt{p_{min}})}{(x + \frac{L}{\sqrt{p_{max}}})}\approx \frac{S_x}{S_y}
+\label{p_t}
+\end{equation}
+
+Where $S_x , S_y$ are the USD prices of token X and token Y, this is equivalent to assuming absence of arbitrage opportunities between an LP and other pools or centralized exchanges.
+
+Adding (removing) liquidity amounts to increasing (decreasing) L via increasing x and y, while keeping p constant. Swapping (trading) tokens amounts to keeping changing x, y and p, while keeping L the same. \cite{lipton2024}
+
+
+
+We solve for x and y given L and p as independent variables. For a given position with L and p as external parameters, this solution provides how much units x and y are assigned to the LP position.
+
+Real reserves of a position for $p_t \in [p_{min}, p_{max}]$:
+
+\begin{equation}
+x(p_t) = 
+\begin{cases} 
+L \left( \frac{1}{\sqrt{p_t}} - \frac{1}{\sqrt{p_{max}}} \right) & p_t \in (p_{\min}, p_{\max}), \\
+L \left( \frac{1}{\sqrt{p_{min}}} - \frac{1}{\sqrt{p_{max}}} \right) & p_t \leq p_{\min}, \\
+0 & p_t \geq p_{\max}.
+\end{cases}
+\label{x_t}
+\end{equation}
+
+\begin{equation}
+y(p_t) = 
+\begin{cases} 
+y = L \left( \sqrt{p_t} - \sqrt{p_{min}} \right) & p_t \in (p_{\min}, p_{\max}), \\
+0 & p_t \leq p_{\min}, \\
+y = L \left( \sqrt{p_{max}} - \sqrt{p_{min}} \right) & p_t \geq p_{\max}.
+\end{cases}
+\label{y_t}
+\end{equation}
+
+Figure ~\ref{fig:univ3_quantities} illustrates the evolution of token quantities in a Uniswap V3 liquidity position as the price \( p_t \) varies. For a position with liquidity parameter \( L = 100000 \) and a 40\% price range centered around the initial price, the amounts of token X and Y adjust dynamically within the range. Inside the range, as \( p_t \) increases, the position accumulates more of token Y (the numeraire) while reducing holdings of token X, reflecting the pool's rebalancing to maintain the constant function. This behavior mimics selling the appreciating asset and buying the depreciating one, which underpins impermanent loss. Outside the range—below the lower bound, the position converts fully to token X, holding a fixed amount with zero Y. Above the upper bound, it shifts entirely to token Y. This concentration amplifies efficiency but heightens sensitivity to price movements, as the position becomes "inactive" outside the range, earning no fees while exposed to full directional risk in one asset.
+\begin{figure}
+\centering
+\includegraphics[width=0.8\columnwidth]{images/LP_qty.png}
+\caption{\footnotesize Quantities of token X and Y in an LP position with L=100000 and a range of 40\% }
+\label{fig:univ3_quantities}
+\end{figure}
+
+Substituting \eqref{x_t} and \eqref{y_t} inside the CPMM and price functions, we obtain the initial value of the LP position :
+
+\begin{equation}
+ V_0^{(y)} = p_0x_0 + y_0 = L \left( 2\sqrt{p_0} - \frac{p_0}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right)
+ \label{V_0^y}
+\end{equation}
+
+
+Given an initial notional expressed in units of token y, $N^y = V_0^{(y)}$,  using the initial value of the position expression, we obtain the provided liquidity L:
+
+$$L = \frac{N^y}{2\sqrt{p_0} - \frac{p_0}{\sqrt{p_{\max}}} - \sqrt{p_{\min}}}.$$
+
+As for the V2 case, we distinguish between funded and borrowed positions.
+A funded position is created by funding the initial allocation of both tokens.
+The value of the funded position equals the value of the LP position:
+$$ V_{funded}^{(y)} = V^{(y)}$$
+As a result, the profit and loss of the funded position in units of token y at time t is given by:
+$$ PNL_{funded}^{(y)} = V_t^{(y)} - V_0^{(y)} =(p_tx_t + y_t)-(p_0x_0 + y_0) $$
+
+The PNL of a funded position in Uniswap V3 at time t with current price $p_t$ is given by:
+
+\begin{equation}
+PNL_{funded}^{(y)} =
+\begin{cases} 
+L \left( 2(\sqrt{p_t}-\sqrt{p_0}) + \frac{p_0 - p_t}{\sqrt{p_{\max}}} \right )& p_t \in (p_{\min}, p_{\max}) \\
+L \left( p_t(\frac{1}{\sqrt{p_{min}}}-\frac{1}{\sqrt{p_{max}}})+ \frac{p_0}{\sqrt{p_{max}}} - 2\sqrt{p_0} + \sqrt{p_{min}} \right )& p_t \leq p_{\min} \\
+L \left( \sqrt{p_{\max}} + \frac{p_0}{\sqrt{p_{\max}}} - 2\sqrt{p_{0}} \right )& p_t \geq p_{\max} \\
+\end{cases}
+\label{pnl_funded^y}
+\end{equation}
+
+The nominal IL for a funded position is defined as:
+$$\text{IL}_{funded}^{(y)}(p_t) = \frac{V_{funded}^{(y)} - V_0^{(y)}}{V_0^{(y)}},$$
+So, substituting we obtain:
+\begin{equation}
+\text{IL}_{funded}^{(y)}(p_t)= \frac{PNL_{funded}^{(y)}}{ L \left( 2\sqrt{p_0} - \frac{p_0}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right)}
+\label{il_funded^y}
+\end{equation}
+
+Other types of IL definition often used is that of relative impermanent loss, which measures the divergence of the position value between initial time and current time with respect to the value of the position consisting in holding the initial amounts of the two tokens, and the hold impermanent loss, which is the divergence between LP position value and hold position value with respect to the hold position value:
+\begin{equation}
+\text{REL-IL}_{funded}^{(y)}(p_t)= \frac{V_{funded}^{(y)} - V_0^{(y)}}{V_{hold}^{(y)}}= \frac{PNL_{funded}^{(y)}}{p_tx_0 + y_0}
+\label{rel_il_funded^y}
+\end{equation}
+
+\begin{equation}
+\text{HOLD-IL}_{funded}^{(y)}(p_t)= \frac{V_{funded}^{(y)} - V_{hold}^{(y)}}{V_{hold}^{(y)}}= \frac{V_{funded}^{(y)}}{V_{hold}^{(y)}}-1
+\label{rel_il_funded^y}
+\end{equation}
+A borrowed position is created by either borrowing $x_0$ units of token X or by purchaising $x_0$ units of token X for providing liquidity and simultaneously selling short the perpetual future for hedging the initial stake of $x_0$ units of token X.
+For the borrowed position with hedging, we set the hedge of selling short $x_0$ units of token X with strike/entry price $p_0$.
+The PNL of the hedge position in units of token Y at time t is given by:
+$$ HedgePNL_t^{(y)} = - (p_t - p_0)x_0$$
+The hedge can be implemented by short selling the perpetual future, and we treat the funding costs separately from the PNL of the position.
+The value of the borrowed LP position at time t is given by:
+$$V_{borrowed}^{(y)}=p_tx_t + y_t - [p_t - p_0]x_0$$
+the PNL of the borrowed position at time t is given by:
+$$ PNL_{borrowed}^{(y)}  =(p_tx_t + y_t)-(p_tx_0 + y_0) $$
+
+\begin{figure}
+\centering
+\includegraphics[width=0.8\columnwidth]{images/LP_values.png}
+\caption{\footnotesize Positions values in units of Y for funded, borrowed, and 50 50 hold, for a 40\% range width. }
+\label{fig:univ3_LP_values}
+\end{figure}
+Figure~\ref{fig:univ3_LP_values} compares the value trajectories of different position types in units of token Y, again for a 40\% range. The funded position, where the LP supplies both tokens outright, shows a concave profile: it underperforms a simple 50/50 hold strategy when prices deviate significantly, due to the rebalancing effect eroding gains from price trends. The borrowed position, hedged by shorting the initial X allocation via perpetuals, isolates the impermanent loss component, resulting in a downward-opening curve that quantifies pure IL—always non-positive and quadratic-like in shape. The 50/50 hold line, representing passive holding of initial amounts, is linear in \( p_t \), serving as a benchmark to highlight how LP internal rebalancing acts like a short volatility bet, profiting from range-bound markets but suffering in trends. These visualizations underscore the trade-offs in V3: higher potential fees from concentration come with nonlinear risks that hedging can mitigate.
+
+We obtain the following equations for the PNL:
+
+\begin{equation}
+PNL_{borrowed}^{(y)} =
+\begin{cases} 
+-L\sqrt{p_0} \left( \sqrt{\frac{p_t}{p_0}}-1  \right )^2 & p_t \in (p_{\min}, p_{\max}) \\
+L \left( p_t(\frac{1}{\sqrt{p_{min}}}-\frac{1}{\sqrt{p_{0}}})- (\sqrt{p_0} - \sqrt{p_{min}}) \right )& p_t \leq p_{\min} \\
+L \left( (\sqrt{p_{max}} - \sqrt{p_0}) - p_t(\frac{1}{\sqrt{p_0}}-\frac{1}{\sqrt{p_{max}}}) \right )& p_t \geq p_{\max} \\
+\end{cases}
+\label{pnl_borrowed^y}
+\end{equation}
+
+The nominal IL for a borrowed position is defined as:
+$$\text{IL}_{borrowed}^{(y)}(p_t) = \frac{V_{borrowed}^{(y)} - V_{0}^{(y)}}{V_0^{(y)}} = \frac{V_{funded}^{(y)} - V_{hold}^{(y)}}{V_0^{(y)}},$$ 
+
+So that substituting we obtain:
+\begin{equation}
+\text{IL}_{borrowed}^{(y)}(p_t)= \frac{PNL_{borrowed}^{(y)}}{ L \left( 2\sqrt{p_0} - \frac{p_0}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right)}
+\label{il_borrowed^y}
+\end{equation}
+
+And for the relative IL we have: 
+\begin{equation}
+\text{REL-IL}_{borrowed}^{(y)}(p_t)= \frac{V_{borrowed}^{(y)} - V_0^{(y)}}{V_{hold}^{(y)}}= 
+\frac{V_{funded}^{(y)}}{V_{hold}^{(y)}}-1 =\frac{PNL_{borrowed}^{(y)}}{p_tx_0 + y_0}
+\label{rel_il_borrowed^y}
+\end{equation}
+
+The relative IL is a benchmark measure for understanding the LP position performance. 
+
+The nominal IL can be easily interpreted because the PNL of the LP position in token Y is the nominal IL multiplied by the initial provided notional so that we obtain:
+$$PNL_{funded}^{(y)}(p_t)= N^y \times \text{IL}_{funded}^{(y)}(p_t)$$
+$$PNL_{borrowed}^{(y)}(p_t)= N^y \times \text{IL}_{borrowed}^{(y)}(p_t)$$
+
+
+
+Note that the tokens can be used interchangeably, the definitions are symmetric, for a position funded in token X, the corresponding PNL and IL measured in units of token X are obtained using $p_t^{-1} = \frac{1}{p_t}$.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.8\columnwidth]{images/fund_borr_PNL.png}
+\caption{\footnotesize Comparison of funded vs borrowed LP profit and loss. }
+\label{fig:fund_borr_PNL}
+\end{figure}
+
+Figure~\ref{fig:fund_borr_rel_IL} presents a comparison of impermanent loss for funded and borrowed LP positions across various range widths in Uniswap V3. The plots highlight how impermanent loss varies with price deviations from the initial level, expressed in units of token Y. For funded positions, the IL curves show a characteristic shape where small price changes lead to minimal losses, but larger deviations amplify the underperformance relative to holding, with narrower ranges exhibiting steeper losses due to quicker exits from the active liquidity zone. This illustrates the trade-off in concentrated liquidity: tighter ranges boost fee potential but heighten IL sensitivity, as the position rapidly shifts to holding one asset fully outside the bounds.
+
+In contrast, the borrowed positions, which incorporate a static hedge on the initial token X exposure, display purely negative IL profiles that are more pronounced in narrower ranges. Comparing different widths of  5\%, 40\%, and 80\% reveals that wider ranges mitigate IL by keeping the position active.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.8\columnwidth]{images/fund_borr_rel_IL.png}
+\caption{\footnotesize Comparison of funded vs borrowed LP impermanent loss for different range widths. }
+\label{fig:fund_borr_rel_IL}
+\end{figure}
+
+\subsection{Exotic Pairs definitions and problems}
+
+With the introduction of Uniswap V3, liquidity pools pairs are classified as stable, normal or exotic depending on the relative price volatility of the assets \cite{univ3}. Stable pairs are characterized by little to no price changes between the pair’s two cryptocurrencies (for example two stablecoins) while we can expect significant price volatility between the two assets of a normal pair. Finally, for exotic pairs, at least one asset is not an established cryptocurrency, and the relative price between the two assets can fluctuate wildly.
+
+The main problem for existing hedging strategies including exotic pairs is the limited concrete use that the LP provider can make out of them at the current state of the art, at least for non major liquidity pools \cite{lipton2024},\cite{clark2020}. \newline
+They apply only to pairs denominated in a stablecoin for tokens with options available, or for which quanto options are available \cite{sepp2024}, the options market must be liquid both in and out of the money, and because of these reasons, the pools which can effectively be hedged in this way are the biggest ones, which also offer the lowest fees, which may be interesting for big players who have complex risk and portfolio volatility mitigation strategies, but not for the LP provider who is looking for yield generation.
+
+Exotic pairs, where both tokens exhibit high volatility, introduce additional complexities to liquidity provision. Unlike standard pairs with a stable numeraire, the relative price fluctuations are driven by two independent stochastic processes, often with varying correlations. This dual volatility amplifies impermanent loss, as movements in either token can push the position out of range or alter its value in unpredictable ways, leading to more frequent rebalancing needs and higher exposure to directional risks.
+
+Modeling such positions becomes challenging due to the need for multivariate frameworks that capture correlations, jumps, and stochastic volatilities between the tokens. 
+
+Hedging exotic pairs is particularly difficult because liquid derivatives, such as options or perpetuals, are often unavailable for lesser-known assets. Even when perpetual swaps exist, their low liquidity can result in significant slippage and funding rate variability, eroding hedge effectiveness. Static replications relying on vanilla options are impractical without mature markets, and dynamic delta hedging must account for both deltas, increasing transaction costs and the risk of imperfect neutralization during volatile periods.
+
+Predicting outcomes in these pools is hindered by the heightened uncertainty: fee generation may be attractive due to wider spreads, but forecasting time-in-range or IL requires robust simulations under correlated diffusions, which are sensitive to model misspecification. Risks include amplified tail events, where correlated crashes in both tokens can lead to substantial losses, and oracle dependencies that, if manipulated, exacerbate pricing discrepancies. Overall, while exotic pairs offer yield potential, they demand sophisticated risk management to avoid outsized drawdowns, often limiting participation to informed LPs with access to custom tools.
+
+In all of the Uniswap math definitions we gave in the previous sections, everything can be measured either in units of token X or Y.
+For exotic pairs, if the intentions of the provider are to account for PNL and IL in token X or Y, because the objective is to accumulate one of the two token in the pool, it make sense to use the previous formulas and to hedge, when possible, based on those, but liquidity providers might have the desire to provide liquidity in an exotic pool and still want to measure PNL, IL and portfolio value in USD terms, for example if the provider doesn't want to hold long term either of the tokens in the pool but thinks that for reasons of fee generation in said pool, it could be worth it. 
+In this second case, we need to adjust all of the calculations to account for the fact that we want to measure everything in USD.
+
+\subsection{Valuation of Exotic Liquidity Provider Positions in Uniswap v3}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/x_surface.png}  % Replace with your image file
+        \caption{\footnotesize Quantity of token X for varying USD prices $S_x, S_y$. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%}
+        \label{fig:x_surface}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/y_surface.png}  % Replace with your image file
+        \caption{\footnotesize Quantity of token Y for varying USD prices $S_x, S_y$. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%}
+        \label{fig:y_surface}
+    \end{subfigure}
+    \caption{\footnotesize Surface representing quantities of token X and Y at variation of prices $S_x$ and $S_y$}
+    \label{fig:xy_surface}
+\end{figure}
+
+Figure~\ref{fig:xy_surface} illustrates the change in token X and Y quantities in an exotic LP position in Uniswap V3 as a function of varying USD prices for both tokens X and Y. In standard pairs with a stable numeraire Y (e.g., fixed at 1 USD), quantities depend solely on the cross price \( p_t = S_X \), simplifying to a one-dimensional plot. However, for exotic pairs where both assets are volatile, quantities are determined by the relative price ratio \( p_t = S_X / S_Y \), making the surface a visualization of how independent movements in \( S_X \) and \( S_Y \) influence the position through this ratio.
+
+We display this surface to emphasize the joint dependency: the quantities remain constant along rays where \( S_X / S_Y \) is fixed (proportional changes), but shift when the ratio varies, such as when \( S_Y \) rises while \( S_X \) stays constant, effectively decreasing \( p_t \) and altering holdings as if X depreciated. This highlights the added complexity in exotic pairs—volatility in the "numeraire" Y introduces indirect effects on the position's composition, unlike the direct mapping in stable-numerated cases. For instance, a surge in \( S_Y \) alone can push the position toward holding more X (the relatively cheaper asset), amplifying rebalancing risks. Compared to the cross-price case, where we plot against a single variable, this surface reveals correlation sensitivities: anti-correlated moves deepen compositional shifts, aiding in understanding why modeling both time series (with drifts, volatilities, and correlations) is crucial for predicting position dynamics and hedging in volatile environments.
+
+We start by deriving explicitly the piecewise functions representing the value of the LP position in units of token Y, substituting the virtual reserves equations ~\eqref{x_t}, ~\eqref{y_t} into the Value equations ~\eqref{V_t_funded} and ~\eqref{V_t_borrowed}.
+
+The value \(V_{funded}^{(y)}(t)\) in units of token Y, net of fees, is piecewise depending on the position of \(p_t\) relative to the range:
+
+\begin{equation}
+V_{funded}^{(y)}(p_t) = 
+\begin{cases} 
+L \left( 2 \sqrt{p_t} - \frac{p_t}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right) & p_t \in (p_{\min}, p_{\max}), \\
+L \cdot p_t \left( \frac{1}{\sqrt{p_{\min}}} - \frac{1}{\sqrt{p_{\max}}} \right) & p_t \leq p_{\min}, \\
+L \left( \sqrt{p_{\max}} - \sqrt{p_{\min}} \right) & p_t \geq p_{\max}.
+\end{cases}
+\end{equation}
+
+For the borrowed positions in the case of exotic tokens, if we want to account for profits in USD terms, we have to do an additional consideration, when we first create the position we must borrow both token X and token Y, so in this case we will short both tokens initial quantities by short selling perpetual futures contracts, in this case the hedge value will be:
+
+$$Hedge_t^{(y)} = -(p_t - p_0)x_0 - y_0$$
+
+\begin{equation}
+V_{borrowed}^{(y)}(p_t) = 
+\begin{cases} 
+L \left( 2 \sqrt{p_t} - \frac{p_t}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right) - (p_t - p_0)x_0- y_0 & p_t \in (p_{\min}, p_{\max}), \\
+L p_t \left( \frac{1}{\sqrt{p_{\min}}} - \frac{1}{\sqrt{p_{\max}}} \right)  - (p_t - p_0)x_0 - y_0 & p_t \leq p_{\min}, \\
+L \left( \sqrt{p_{\max}} - \sqrt{p_{\min}} \right)  - (p_t - p_0)x_0 - y_0 & p_t \geq p_{\max}.
+\end{cases}
+\end{equation}
+
+If we are considering exotic pairs, but we still want to use token Y as numeraire for the calculations, we still can use the previous version without hedging token Y from equation ~\eqref{V_t_borrowed}.
+
+This expressions follows from the constant function market maker mechanism in Uniswap v3, where the position adjusts holdings of X and Y based on \(p_t\). For \(p_t\) within the range, the value reflects a combination of real and virtual reserves; below the range, the position is fully in X; above, fully in Y.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.6\columnwidth]{images/inrange_region.png}
+\caption{\footnotesize In range region in black, with token X and Y USD prices varying. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%}
+\label{fig:range_region}
+\end{figure}
+
+Figure~\ref{fig:range_region} delineates the in-range region for an exotic LP position in Uniswap V3 within the plane of USD prices for tokens X ($S_x$) and Y ($S_y$). The region is bounded by the lines $S_x = p_{min} S_y$ and $S_x = p_{max} S_y$, where $p_{max}$ and $p_u$ are the lower and upper cross-price bounds of the liquidity range (e.g., a 40\% symmetric range around the initial price). Within this wedge-shaped area in the positive quadrant, the position is active, providing liquidity and earning fees as the relative price $p_t = S_x / S_y$ stays between $p_{min}$ and $p_{max}$. Outside, to the left of $p_{min}$ (below range), the position holds only X; to the right of $p_{max}$ (above range), only Y.
+
+We visualize this region to highlight the dependency on both absolute price levels in exotic pairs, where volatility in Y distorts the effective range. For instance, if $S_y$ surges while $S_x$ lags, $p_t$ decreases, potentially exiting the range downward even without $S_x$ changing—illustrating how the "numeraire" instability introduces extra paths for deactivation. This 2D perspective differs from the 1D cross-price view (where the range is a fixed interval on $p_t$), as it captures correlation impacts: positively correlated moves keep the position in-range longer along proportional rays, while anti-correlated ones accelerate exits, informing hedging strategies that must monitor joint dynamics to maintain neutrality.
+
+In exotic pairs, where both tokens X and Y are volatile (e.g., UNI-ETH pool), we are interested in the USD valuation of the position to account for fluctuations in \(S_y(t)\). The USD value \(V^{USD}(t)\) is obtained by converting \(V^{(y)}(t)\) by multiplying it by the USD price of token Y,  \(S_y(t)\):
+\begin{adjustwidth}{-3cm}{-3cm}
+\begin{equation}
+V_{funded}^{USD}(t) = S_y(t) \cdot V_{funded}^{(y)}(t) = 
+\begin{cases} 
+S_y(t) \cdot L \left( 2 \sqrt{p_t} - \frac{p_t}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right) & p_t \in (p_{\min}, p_{\max}), \\
+S_y(t) \cdot L p_t \left( \frac{1}{\sqrt{p_{\min}}} - \frac{1}{\sqrt{p_{\max}}} \right) & p_t \leq p_{\min}, \\
+S_y(t) \cdot L \left( \sqrt{p_{\max}} - \sqrt{p_{\min}} \right) & p_t \geq p_{\max}.
+\end{cases}
+\end{equation}
+\end{adjustwidth}
+Substituting \(p_t = S_x(t) / S_y(t)\) explicitly:
+
+\begin{equation}
+V_{funded}^{USD}(t) = 
+\begin{cases} 
+S_y(t) \cdot L \left( 2 \sqrt{\frac{S_x(t)}{S_y(t)}} - \frac{S_x(t)}{S_y(t) \sqrt{p_{\max}}} - \sqrt{p_{\min}} \right) & \frac{S_x(t)}{S_y(t)} \in (p_{\min}, p_{\max}), \\
+S_y(t) \cdot L \left( \frac{S_x(t)}{S_y(t)} \left( \frac{1}{\sqrt{p_{\min}}} - \frac{1}{\sqrt{p_{\max}}} \right) \right) & \frac{S_x(t)}{S_y(t)} \leq p_{\min}, \\
+S_y(t) \cdot L \left( \sqrt{p_{\max}} - \sqrt{p_{\min}} \right) & \frac{S_x(t)}{S_y(t)} \geq p_{\max}.
+\end{cases}
+\label{eq:value_funded_usd}
+\end{equation}
+
+When Y is a stablecoin, \(S_y(t) \approx 1\) and constant, so \(V^{USD}(t)\) reduces to \(V^{(y)}(t)\), aligning with standard analyses where Y acts as a stable numeraire.
+
+For borrowed positions where we short sell both tokens in the pool the hedge value in USD will be: 
+$$ Hedge_t^{USD} = -(S_{x,t} - S_{x,0})x_0 - (S_{y,t} - S_{y,0})y_0 $$
+
+So that the value of the LP position becomes:
+$$V_{borrowed}^{USD}(t) = S_{y,t}(p_tx_t + y_t) -(S_{x,t} - S_{x,0})x_0 - (S_{y,t} - S_{y,0})y_0 $$
+
+Repeating the same steps as for the funded LP we obtain the USD value of the borrowed LP:
+\begin{adjustwidth}{-3cm}{-3cm}
+\begin{equation}
+V_{borrowed}^{USD}(t) = 
+\begin{cases} 
+S_{y,t}\left( L \left( 2 \sqrt{p_t} - \frac{p_t}{\sqrt{p_{\max}}} - \sqrt{p_{\min}} \right)\right) -(S_{x,t} - S_{x,0})x_0 - (S_{y,t} - S_{y,0})y_0  & p_t \in (p_{\min}, p_{\max}), \\
+S_{y,t}\left( L p_t \left( \frac{1}{\sqrt{p_{\min}}} - \frac{1}{\sqrt{p_{\max}}} \right)\right)  -(S_{x,t} - S_{x,0})x_0 - (S_{y,t} - S_{y,0})y_0  & p_t \leq p_{\min}, \\
+S_{y,t} \left( L \left( \sqrt{p_{\max}} - \sqrt{p_{\min}} \right) \right)-(S_{x,t} - S_{x,0})x_0 - (S_{y,t} - S_{y,0})y_0 & p_t \geq p_{\max}.
+\end{cases}
+\label{eq:value_borrowed_usd}
+\end{equation}
+\end{adjustwidth}
+When considering exotic pairs value in USD terms, we must consider the fact that the cross price is driven by two separated processes, with varying degrees of correlation. It makes sense then to visualize, instead of the Value of the positions with the cross price varying, also the surfaces yielding from the variation of both tokens price processes.
+
+
+\begin{figure}
+\centering
+\includegraphics[width=0.6\columnwidth]{images/exotic_funded_value.png}
+\caption{\footnotesize Value of a funded position at varying of both tokens price processes. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%.}
+\label{fig:exotic_funded_value}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.6\columnwidth]{images/exotic_borrowed_value.png}
+\caption{\footnotesize Value of a borrowed position at varying of both tokens price processes. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%.}
+\label{fig:exotic_borrowed_value}
+\end{figure}
+\newpage
+
+\subsection{PNL of exotic LP positions}
+
+Starting from the definition of PNL of equations \eqref{pnl_funded^y},\eqref{pnl_borrowed^y} we can express the PNL of the position in terms of USD by remembering the definition of PNL:
+$$ PNL_{funded}^{USD} = V_{funded, t}^{USD}  - V_0^{USD}$$
+which yields the following intuitive form:
+\begin{equation}
+    PNL_{funded}^{USD}(S_{x},S_y) = S_{y,t}(p_tx_t + y_t) - S_{y,0}(p_0x_0 + y_0)
+\end{equation}
+
+substituting the piecewise functions for the real reserves and using $p_t = \frac{S_{x,t}}{S_{y,t}}$ we obtain:
+\begin{adjustwidth}{-3cm}{-3cm}
+\begin{equation}
+PNL_{funded}^{USD} =
+\begin{cases} 
+L \left( 2\sqrt{S_{x,t}S_{y,t}}-\frac{S_{x,t}}{\sqrt{p_{\max}}}-S_{y,t}\sqrt{p_{\min}} \right ) - \left( S_{x,0}x_0 + S_{y,0}y_0 \right)  & \frac{S_{x,t}}{S_{y,t}} \in (p_{\min}, p_{\max}) \\
+L \left( S_{x,t}(\frac{1}{\sqrt{p_{min}}}-\frac{1}{\sqrt{p_{max}}})\right )- \left( S_{x,0}x_0 + S_{y,0}y_0 \right)& \frac{S_{x,t}}{S_{y,t}} \leq p_{\min} \\
+L \left( S_{y,t} (\sqrt{p_{max}} - \sqrt{p_{min}})\right ) - \left( S_{x,0}x_0 + S_{y,0}y_0 \right)& \frac{S_{x,t}}{S_{y,t}} \geq p_{\max} \\
+\end{cases}
+\label{pnl_borrowed^usd}
+\end{equation}
+\end{adjustwidth}
+
+Now for the borrowed position, considering the hedge on both tokens in the pool we obtain the following form:
+\begin{equation}
+    PNL_{borrowed}^{USD}(S_{x},S_y) = S_{x,t}(x_t - x_0) + S_{y,t}(y_t - y_0)
+\end{equation}
+substituting the piecewise functions for the real reserves and using $p_t = \frac{S_{x,t}}{S_{y,t}}$ we obtain:
+
+\begin{adjustwidth}{-3cm}{-3cm}
+\begin{equation}
+PNL_{borrowed}^{USD} =
+\begin{cases} 
+S_{x,t}\left( L \left( \frac{1}{\sqrt{\frac{S_x(t)}{S_y(t)}}}-\frac{1}{\sqrt{p_{max}}} \right )-x_0\right ) + S_{y,t}\left( L \left( \sqrt{\frac{S_x(t)}{S_y(t)}} - \sqrt{p_{min}} \right )-y_0\right )  & \frac{S_{x,t}}{S_{y,t}} \in (p_{\min}, p_{\max}) \\
+S_{x,t}\left( L \left( \frac{1}{\sqrt{p_{min}}}-\frac{1}{\sqrt{p_{max}}} \right )-x_0\right ) - S_{y,t}y_0  & \frac{S_{x,t}}{S_{y,t}} \leq p_{\min} \\
+-S_{x,t}x_0 + S_{y,t}\left( L \left(\sqrt{p_{max}} - \sqrt{p_{min}} \right )-y_0\right )  & \frac{S_{x,t}}{S_{y,t}} \geq p_{\max} \\
+\end{cases}
+\label{pnl_borrowed^usd}
+\end{equation}
+\end{adjustwidth}
+
+As showed in the figure \ref{fig:pnl_difference_funded_borrowed_usd} which represent the function $y=PNL_{funded}^{USD} - PNL_{borrowed}^{USD}$, we can see how when both USD prices are going down, is better to have the borrowed position because of the hedge, but we are also missing out on the positive gains when the prices are going up with respect to the funded position.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/pnl_funded_usd.png}  % Replace with your image file
+        \caption{\footnotesize USD pnl of funded position.}
+        \label{fig:pnl_funded_surface}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/pnl_borrowed_usd.png}  % Replace with your image file
+        \caption{\footnotesize USD pnl of borrowed position.}
+        \label{fig:pnl_borrowes_surface}
+    \end{subfigure}
+    \caption{\footnotesize The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+\end{figure}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.6\columnwidth]{images/pnl_difference_funded_borrowed_usd.png}
+\caption{\footnotesize Difference function between funded and borrowed positions PNL of figures \ref{fig:pnl_funded_surface} and \ref{fig:pnl_borrowes_surface}. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%.}
+\label{fig:pnl_difference_funded_borrowed_usd}
+\end{figure}
+\newpage
+
+\subsection{Impermanent Loss in USD for Exotic Pairs}
+
+In the classical setting, where token Y is stable with \(S_y(t) \approx 1\) and constant, or we want to perform the calculations in units of Y, the impermanent loss (IL) is defined in units of Y. In general, nominal impermanent loss is defined as:
+
+$$\text{IL} = \frac{V_{t} - V_{0}}{V_0}$$
+while relative IL as:
+$$\text{REL-IL} = \frac{V_{t} - V_{0}}{V_{hold}}$$
+
+where $V_t$ is the position value at time t, and $V_{hold}$ is the value of the position if we held the initial quantity of tokens X and Y without providing the liquidity. 
+For exotic pairs, where both X and Y are volatile, expressing IL in units of Y overlooks the fluctuations in \(S_y(t)\), the USD price of Y. Instead, we define the USD impermanent loss relative to holding the initial portfolio in USD terms.
+Based on this general definition, we define the impermanent loss in terms of USD by expressing all of the values in USD terms.
+For funded positions:
+\begin{equation}
+    IL_{funded}^{USD}(p_t) =  \frac{V_{funded}^{USD}(p_t) - V_{0}^{USD}}{V_0^{USD}}
+\end{equation}
+\begin{equation}
+    \text{REL-IL}_{funded}^{USD}(p_t) =  \frac{V_{funded}^{USD}(p_t) - V_{0}^{USD}}{V_{hold}^{USD}}
+    \label{eq:rel_il_funded_usd}
+\end{equation}
+For borrowed positions:
+\begin{equation}
+    IL_{borrowed}^{USD}(p_t) =  \frac{V_{borrowed}^{USD}(p_t) - V_{0}^{USD}}{V_0^{USD}}
+\end{equation}
+\begin{equation}
+    \text{REL-IL}_{borrowed}^{USD}(p_t) =  \frac{V_{borrowed}^{USD}(p_t) - V_{0}^{USD}}{V_{hold}^{USD}}
+    \label{eq:rel_il_borrowed_usd}
+\end{equation}
+Where the value of the hold position is given by:
+
+$$V_{hold}^{USD} = S_{x,t} x_0 + S_{y,t} y_0 = S_{y,t} (p_t x_0 + y_0),$$
+
+Plugging all of these equations together we obtain the following form:
+\begin{equation}
+    IL_{funded}^{USD}(p_t) =  \frac{S_{y,t}V_{funded}^{(y)} - S_{y,0} V_0^{(y)}}{S_{y,0}V_0^{(y)}}=\frac{S_{y,t}}{S_{y,0}}\cdot (IL_{funded}^{(y)} + 1) - 1
+    \label{eq:il_funded_usd}
+\end{equation}
+
+And with the same reasoning we get to:
+\begin{equation}
+    IL_{borrowed}^{USD}(p_t) =  \frac{S_{y,t}V_{borrowed}^{(y)} - S_{y,t} (p_t x_0 + y_0)}{S_{y,0}V_0^{(y)}}=\frac{S_{y,t}}{S_{y,0}}\cdot (IL_{borrowed}^{(y)} + 1) - 1
+    \label{eq:il_funded_usd}
+\end{equation}
+
+This means we can just use the IL in terms of token Y equations \eqref{il_funded^y}, \eqref{il_borrowed^y} and apply this transformation to find the nominal IL measured in USD. \newline
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/nom_il_fund_usd.png}  % Replace with your image file
+        \caption{\footnotesize USD nominal IL of funded position.}
+        \label{fig:nom_il_fund_usd}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/nom_il_borr_usd.png}  % Replace with your image file
+        \caption{\footnotesize USD nominal IL of borrowed position.}
+        \label{fig:nom_il_borr_usd}
+    \end{subfigure}
+    \caption{\footnotesize The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+    \label{fig:nom_il_usd}
+\end{figure}
+
+Now let's develop the equations for the relative impermanent loss, after substituting \eqref{il_funded^y}, \eqref{il_borrowed^y} using the definitions of USD position values into \eqref{eq:rel_il_funded_usd} and \eqref{eq:rel_il_borrowed_usd} we obtain the value of the USD nominal IL in terms of the token Y IL:
+
+\begin{adjustwidth}{-3cm}{-3cm}
+\begin{equation}
+    \text{REL-IL}_{funded}^{USD}(p_t) =  \frac{S_{y,t}V_{funded}^{(y)} - S_{y,0} V_0^{(y)}}{S_{y,t}V_{hold}^{(y)}}=\frac{V_{funded}^{(y)}}{V_{hold}^{(y)}}\left(1-\frac{S_{0,t}}{S_{y,t}}\right) + \frac{S_{0,t}}{S_{y,t}} \cdot  \text{REL-IL}_{funded}^{y}
+    \label{eq:il_funded_usd_2}
+\end{equation}
+\end{adjustwidth}
+
+While for the borrowed IL:
+
+\begin{adjustwidth}{-3cm}{-3cm}
+\begin{equation}
+    \text{REL-IL}_{borrowed}^{USD}(p_t) =  \frac{S_{y,t}V_{borrowed}^{(y)} - S_{y,0} V_0^{(y)}}{S_{y,t}V_{hold}^{(y)}}=\frac{V_{borrowed}^{(y)}}{V_{hold}^{(y)}}\left(1-\frac{S_{0,t}}{S_{y,t}}\right) + \frac{S_{0,t}}{S_{y,t}} \cdot  \text{REL-IL}_{borrowed}^{y}
+    \label{eq:il_borrowed_usd_2}
+\end{equation}
+\end{adjustwidth}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/rel_il_fund_us.png}  % Replace with your image file
+        \caption{\footnotesize USD relative IL of funded position.}
+        \label{fig:rel_il_fund_usd}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/rel_il_borr_usd.png}  % Replace with your image file
+        \caption{\footnotesize USD relative IL of borrowed position.}
+        \label{fig:rel_il_borr_usd}
+    \end{subfigure}
+    \caption{\footnotesize The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+    \label{fig:rel_il_usd}
+\end{figure}
+
+Figure~\ref{fig:rel_il_usd} presents the relative impermanent loss in USD for both funded and borrowed exotic LP positions in Uniswap V3, with subfigures (a) and (b) respectively. The plots are shown as functions of the USD prices of tokens X ($S_x$) and Y ($S_y$), assuming initial prices $S_x = S_y = 1$, an initial notional of 100k USD, and a specified range. Relative IL is computed as the IL divided by the initial position value, providing a normalized measure of loss that highlights percentage impacts independent of scale.
+
+For the funded position (a), the surface captures how divergent price movements in $S_x$ and $S_y$ lead to underperformance relative to holding, with deeper losses in regions where the cross price $p_t = S_x / S_y$ deviates far from the range—exacerbated by the volatile numeraire. This normalization reveals the proportional drag: even small absolute changes can yield significant relative IL if correlations break down, emphasizing the amplified risks in exotic pairs compared to stable-numerated ones.
+
+The borrowed position (b), with its static hedge, isolates the pure rebalancing cost, showing a surface that is always non-positive and more quadratic in nature along the relative price dimension. Intuitively, this view underscores that while absolute IL grows with notional, the relative metric aids in comparing strategies across scales, guiding LPs on when hedging pays off—e.g., in high-volatility scenarios where relative losses exceed fee yields. By plotting against both time series, we illustrate the multidimensional risk landscape, where joint drifts and volatilities dictate outcomes, differing from 1D cross-price plots by incorporating correlation effects that can either buffer or intensify relative IL.
+
+This framework ensures the IL reflects true economic loss in USD, crucial for exotic pairs where Y's price movements can amplify or mitigate the classical divergence loss. \newline
+ It's important noting how, when we account for the impermanent loss in units of token Y, see figure \ref{fig:fund_borr_rel_IL}, we know that we will end up at some point in that function, based on the cross price $p_t$, when considering the USD valuation of exotic pools, our impermanent loss is driven by two separated price processes, and its value can be any point on the surface of figures \ref{fig:nom_il_usd} or \ref{fig:rel_il_usd}.
+
+\newpage
+
+\section{Hedging exotic LP positions}
+
+Hedging liquidity provider positions in exotic pairs is essential due to the high volatility in both tokens, which amplifies impermanent loss risks beyond what the standard approaches captures \cite{khakhar2022}. In normal pools where one token acts as a stable numeraire (like a stablecoin), IL can be managed by focusing on the relative price $p_t$ and hedging exposure to the volatile token. However, in exotic pairs—such as UNI-ETH—both tokens fluctuate significantly, and their USD prices $S_x(t)$ and $S_y(t)$ introduce additional layers of risk through correlation effects and independent drifts.
+This volatility demands USD-neutral strategies to mitigate IL effectively. Traditional Y-numeraire methods overlook changes in $S_y(t)$, potentially leading to misleading valuations when expressed in USD terms. For instance, a drop in $S_y(t)$ could erode gains from fee income or exacerbate losses from divergence, even if $p_t$ remains stable. To address this, hedging must target USD-denominated exposures, aiming for market-neutral positions that isolate fee yields while neutralizing directional bets on $S_x(t)$ and $S_y(t)$.
+By constructing such strategies, LPs can better preserve capital in turbulent markets, turning liquidity provision into a more reliable source of returns. The following sections explore the dynamics, sensitivities, and practical tools for achieving this.
+
+\subsection{Delta Sensitivities}
+Delta measures the first-order sensitivity of position value to changes in $S_x$ and $S_y$. We derive partial derivatives for $V_{\text{funded}}^{\text{USD}}$ and $V_{\text{borrowed}}^{\text{USD}}$ w.r.t. $S_x,S_y$ from equations \eqref{eq:value_funded_usd} and \eqref{eq:value_borrowed_usd}
+
+For $V_{\text{funded}}^{\text{USD}}$:
+
+\begin{equation}
+    \Delta_{funded}^{S_y} = \frac{\partial V_{funded}^{USD}}{\partial S_y}=
+    \begin{cases}
+        L\cdot \left[ \sqrt{\frac{S_{x,t}}{S_{y,t}}}-\sqrt{p_{min}}\right] & p_t \in [p_{min}, p_{max}] \\
+        0 & p_t \leq p_{min} \\
+        L\cdot \left[ \sqrt{p_{max}}-\sqrt{p_{min}}\right] & p_t \geq p_{max}
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+    \Delta_{funded}^{S_x} = \frac{\partial V_{funded}^{USD}}{\partial S_x}=
+    \begin{cases}
+        L\cdot \left[ \sqrt{\frac{S_{y,t}}{S_{x,t}}}- \frac{1}{\sqrt{p_{max}}}  \right] & p_t \in [p_{min}, p_{max}] \\
+        L\cdot \left[  \frac{1}{\sqrt{p_{min}}}- \frac{1}{\sqrt{p_{max}}}  \right] & p_t \leq p_{min} \\
+        0 & p_t \geq p_{max}
+    \end{cases}
+\end{equation}
+
+Of course the delta w.r.t. X and Y are equals to the quantities of the tokens in the positions varying with the cross price. This means that that when we create a borrowed position we are in fact delta hedging the initial exposure to the tokens in the pool.
+
+So for the borrowed positions we simply have:
+
+\begin{equation}
+   \Delta_{borrowed}^{S_y}= \Delta_{funded}^{S_y} - y_0,\quad \Delta_{borrowed}^{S_x} =\Delta_{funded}^{S_x} - x_0
+\end{equation}
+
+\begin{figure}
+\centering
+\includegraphics[width=0.6\columnwidth]{images/delta_vs_p.png}
+\caption{\footnotesize Delta against cross price for funded and borrowed positions. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+\label{fig:delta_vs_p}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/deltax_surf.png}  % Replace with your image file
+        \label{fig:deltax_surf}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/deltay_surf.png}  % Replace with your image file
+        \label{fig:deltay_surf}
+    \end{subfigure}
+    \caption{\footnotesize Delta for X and Y for borrowed position. The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+    \label{fig:rel_il_usd}
+\end{figure}
+
+
+\subsection{Gamma Sensitivities}
+Gamma captures second-order effects, quantifying convexity or concavity. We compute these partial derivative starting from the Delta equations:
+
+\begin{equation}
+    \Gamma_{yy} = \frac{\partial \Delta_{funded}^{S_y}}{\partial S_y}=
+    \begin{cases}
+        -\frac{L}{2}\cdot \sqrt{\frac{S_{x,t}}{S_{y,t}^3}} & p_t \in [p_{min}, p_{max}] \\
+        0 & p_t \leq p_{min} \\
+        0 & p_t \geq p_{max}
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+    \Gamma_{xx} = \frac{\partial \Delta_{funded}^{S_x}}{\partial S_x}=
+    \begin{cases}
+        -\frac{L}{2}\cdot \sqrt{\frac{S_{y,t}}{S_{x,t}^3}} & p_t \in [p_{min}, p_{max}] \\
+        0 & p_t \leq p_{min} \\
+        0 & p_t \geq p_{max}
+    \end{cases}
+\end{equation}
+
+\begin{equation}
+    \Gamma_{xy} = \frac{\partial \Delta_{funded}^{S_x}}{\partial S_y}=
+    \begin{cases}
+        \frac{L}{2\sqrt{S_{x,t}S_{y,t}}} & p_t \in [p_{min}, p_{max}] \\
+        0 & p_t \leq p_{min} \\
+        0 & p_t \geq p_{max}
+    \end{cases}
+\end{equation}
+
+For $V_{\text{borrowed}}^{\text{USD}}$ Gamma is the same as funded since the hedge part is linear:
+
+\begin{equation}
+   \Gamma_{funded} = \Gamma_{borrowed}=\Gamma
+\end{equation}
+Outside the range, all gammas are zero due to linear value functions. Negative gammas inside indicate concavity, implying LP positions behaves like short options, selling volatility.
+The cross-gamma $\Gamma_{xy}$ captures the sensitivity of the position's delta to changes in the other asset, reflecting correlation risks between $S_x$ and $S_y$. To offset this component, ideally, one would use a cross-asset derivative, such as a quanto option (payoff in one currency but based on the other asset) or an option on the product $S_x S_y$ or quotient $S_x / S_y$. These instruments provide direct exposure to joint movements.
+However, in current markets for exotic tokens, such products are rarely available, liquid options exist mainly for major pairs like BTC ,ETH or SOL and options are denominated in USDT. Perpetual futures, while useful for delta hedging, are linear and cannot hedge gamma (including cross terms). As a practical alternative, if $S_x$ and $S_y$ are highly correlated with tradable proxies (e.g., via indices, principal component analysis clustering), one could approximate by hedging gammas separately and adjusting for empirical $\rho$. Otherwise, the cross-gamma often remains partially unhedged, managed through position sizing or diversification, accepting residual correlation risk in dynamic strategies.
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/gamma_vs_p.png}  % Replace with your image file
+        \subcaption{Gamma against cross price for funded and borrowed positions.}
+        \label{fig:gamma_vs_p}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/gammaxx_surf.png}  % Replace with your image file
+        \subcaption{Gamma XX surface at varying of the price processes.}
+        \label{fig:gammaxx_surf}
+    \end{subfigure}
+    \caption{\footnotesize The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/gammayy_surf.png}  % Replace with your image file
+        \subcaption{Gamma YY surface at varying of the price processes.}
+        \label{fig:gammayy_surf}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/gammaxy_surf.png}  % Replace with your image file
+        \subcaption{Gamma XY surface at varying of the price processes.}
+        \label{fig:gammaxy_surf}
+    \end{subfigure}
+    \caption{\footnotesize The example position considers initial prices $S_x=S_y=1$, an initial notional $N^{USD} = 100k$, and a symmetric range width of 40\%, so in the displayed surfaces we have $p\in [0.8, 1.2]$ and the two price processes are presented up to a plus-minus 50\% swing.}
+\end{figure}
+\newpage
+
+\subsection{Hedging Techniques Overview}
+Hedging the portfolio value and hedging impermanent loss (IL) are related but distinct concepts in the context of LP positions. The portfolio value, such as $V_{\text{funded}}^{\text{USD}}$ or $V_{\text{borrowed}}^{\text{USD}}$, represents the total USD worth of the position at any time, net of fees but including price-driven changes in holdings. Hedging this value aims to stabilize or protect the absolute level against fluctuations in $S_x$ and $S_y$, potentially using deltas and gammas to neutralize sensitivities across the entire surface.
+In contrast, hedging IL specifically targets the divergence component, the loss relative to a benchmark like the initial value (nominal IL) or the hold portfolio (relative IL). For instance, an IL protection claim pays -IL, offsetting just the impermanent component while leaving other elements (e.g., directional exposure in funded positions) intact. 
+They overlap significantly: for market-neutral strategies, hedging IL effectively stabilizes the value by isolating fees. However, they differ when directional bets are desired—hedging value might allow some exposure, while pure IL hedging focuses solely on the relative underperformance. In practice for exotics, both require similar tools (e.g., perpetuals), but IL hedging emphasizes replication of the specific payoff decomposition.
+Delta hedging the LP position neutralizes first-order sensitivities to price changes in $S_x$ and $S_y$, effectively making the position locally insensitive to small movements. For a borrowed position, where the initial exposure is already hedged, this directly targets the impermanent loss (IL) by offsetting the linear components of divergence from the hold benchmark. However, it does not fully hedge IL, as higher-order effects like gamma (convexity in the value surface) remain exposed, leading to residual losses from larger price swings or volatility.
+In funded positions, delta hedging reduces directional risk but may not isolate IL specifically, as it could alter the overall profile. Overall, delta hedging provides partial protection against IL, strong for small changes but incomplete without gamma adjustments, which are challenging in exotic markets lacking options.
+In a borrowed LP position, the initial exposure is already delta hedged by shorting perpetual futures on the initial quantities ($x_0$ for standard pairs, or both $x_0$ and $y_0$ for exotics). This neutralizes the linear directional risk from the starting allocation, but impermanent loss (IL) remains due to the non linear adjustments in holdings as $p_t$ evolves, essentially the convexity in the value function.
+
+To hedge the remaining IL:
+\begin{itemize}
+    \item \textbf{Dynamic Delta Hedging}: Continuously monitor and rebalance the hedge using updated deltas ($\Delta_x$, $\Delta_y$) from the position value. As prices move, adjust perpetual futures positions to offset changing sensitivities. This approximates hedging IL by countering local linear risks, though transaction costs and discrete rebalancing introduce errors.
+    \item \textbf{Delta-Gamma Hedging}: Use options \cite{lipton2024} or variance swaps \cite{Fukasawa2022} on $S_x$ and $S_y$ to neutralize second-order effects. However, for exotic pairs, liquid options are unavailable, limiting this to proxies or leaving gamma exposed. The literature focuses on hedging nominal IL. 
+    \item \textbf{Static Replication}: Synthetize an IL protection claim (payoff = -IL) using a portfolio of vanillas, as in Lipton et al. (2024) \cite{lipton2024} decomposition into calls, puts, digitals, and square-root contracts.
+\end{itemize}
+
+\subsubsection{IL Protection Claims}
+As defined in \cite{lipton2024}, fixing a maturity time T, we define the protection claim against nominal IL as a derivative security whose payoff at time T equals the negative value of the IL.\newline
+For funded positions:
+
+\begin{equation}
+    Payoff_{funded}^{(y)}(p_t) = -IL_{funded}^{(y)}(p_t)
+    \label{eq:il_protection_claim_fund_y}
+\end{equation}
+\begin{equation}
+    Payoff_{funded}^{USD}(p_t) = -IL_{funded}^{USD}(p_t)
+    \label{eq:il_protection_claim_fund_usd}
+\end{equation}
+
+For borrowed positions:
+\begin{equation}
+    Payoff_{borrowed}^{(y)}(p_t) = -IL_{borrowed}^{(y)}(p_t)
+    \label{eq:il_protection_claim_borr_y}
+\end{equation}
+\begin{equation}
+    Payoff_{borrowed}^{USD}(p_t) = -IL_{borrowed}^{USD}(p_t)
+    \label{eq:il_protection_claim_borr_usd}
+\end{equation}
+
+\subsubsection{Static Replication of Impermanent Loss}
+
+Recent literature has explored static replication strategies to hedge impermanent loss (IL) in Uniswap protocols using traded options. For Uniswap V2, Fukasawa et al. (2022) \cite{Fukasawa2022} approximate hedging with variance and gamma swaps, while Lipton (2024) \cite{lipton2024} derives both static and model-dependent costs under the Heston model. Extending to Uniswap V3, Deng et al. (2023) ,Lipton (2024) \cite{lipton2024} develop replications relying on the analytical IL formula, often requiring both in-the-money and out-of-the-money calls and puts, which can be costly due to liquidity concentration in out-of-the-money strikes.
+
+Lipton et al. (2024) provide a generic approach for general CFMMs, decomposing the IL protection claim (equations \eqref{eq:il_protection_claim_fund_y} and \eqref{eq:il_protection_claim_borr_y}) into a portfolio of vanilla calls, puts, and digitals. This method is cost-efficient, focusing on liquid out-of-the-money options, but assumes a mature options market—limiting applicability to major assets like Bitcoin and Ether, not exotics. 
+The process involves deriving the exact IL formula for the concentrated liquidity range and replicating it with a strip of calls and puts struck at levels corresponding to the range bounds and intermediate points. For instance, the protection claim against IL—delivering the negative of the loss—can be synthesized by holding puts below the lower bound to cover downside rebalancing and calls above the upper bound for upside erosion, ensuring the portfolio's value offsets the divergence from holding.
+
+One advantage of this method is its model-independence: it relies solely on arbitrage-free pricing and doesn't require assumptions about underlying dynamics, making it robust in uncertain markets. Additionally, being static, it avoids transaction costs from frequent rehedging, which is beneficial in high-gas environments like DeFi.
+
+However, practical limitations arise, especially for exotic pairs. It demands a liquid options market across a spectrum of strikes, including in-the-money ones, which are often illiquid or absent for non-major tokens—concentrated liquidity typically favors out-of-the-money options. Implementation can be costly due to wide bid-ask spreads and premiums, and the fixed-maturity nature mismatches the perpetual aspect of LP positions, necessitating rollovers that introduce basis risk. For volatile exotics without established derivatives, this approach may be infeasible, pushing reliance toward dynamic alternatives.
+
+
+\subsubsection{Model-Dependent Valuation of IL Protection Claims}
+
+For dynamic hedging where options are unavailable, model-dependent valuation of IL protection claims enables delta-hedging strategies. Lipton et al. (2024) decompose the IL into vanilla options, digitals, and a square-root exotic payoff, allowing analytic pricing under models with known characteristic functions via the Lipton-Lewis formula.
+
+They derive closed-form solutions for the Black-Scholes-Merton model (single volatility parameter) and log-normal stochastic volatility model (Sepp-Rakhmonov, 2023), incorporating correlated volatility. This facilitates risk-reward estimation and backtesting, though it assumes continuous rebalancing and ignores costs like slippage or funding rates in perpetual futures.
+
+Model-dependent valuation of impermanent loss protection claims relies on specifying a stochastic process for the underlying asset prices to compute the expected payoff under a risk-neutral measure. This approach, derives closed-form or semi-analytic formulas for the claim's value, which pays the negative of the IL at a fixed maturity. For Uniswap V3, the IL decomposition into vanilla options, digital payoffs, and square-root terms enables pricing under models where the characteristic function is known, such as Black-Scholes-Merton or log-normal stochastic volatility.
+Under the Black-Scholes framework, the valuation simplifies to integrating these components using standard option pricing formulas, with volatility as the key parameter. More advanced models, like Heston, incorporate mean-reverting volatility to better capture smile effects and long-term dynamics, yielding solutions via Fourier transforms or numerical methods. This allows for sensitivity analysis, such as computing Greeks for hedging, but requires accurate parameter estimation from historical data.
+The main benefit is flexibility in handling complex dynamics, especially for exotic pairs where correlations between tokens must be modeled explicitly—e.g., using bivariate diffusions for both assets. However, it introduces model risk: misspecified assumptions (e.g., constant volatility) can lead to hedging errors, and calibration to market data is challenging for illiquid tokens without liquid options. In practice, this method suits over-the-counter arrangements where custom claims are priced, but for on-chain implementation, computational demands may favor approximations. Overall, it complements static replication by providing a dynamic pricing tool when liquid derivatives are scarce.
+Moreover this approach is quite difficult to grasp, there is no consensus about what the risk-free rate in Defi is, so it is not clear how we can define the risk free probability measure, there is no mature option market to calibrate volatility and other parameters.
+In other words, the Defi space is still a new and immature market, lots of assumptions have to be made in order to apply classical financial methods.
+
+\subsubsection{Problems for available Hedging techniques for Exotic pairs}
+The main problem for these strategies is the limited concrete use that the LP provider can make out of them at the current state of the art, at least for non major liquidity pools.
+They apply only to pairs denominated in a stablecoin for tokens with options available, or for which quanto options are available, the options market must be liquid both in and out of the money, and because of these reasons, the pools which can effectively be hedged in this way are the biggest ones, which also offer the lowest fees, which may be interesting for big players who have complex risk and portfolio volatility mitigation strategies, but not for the LP provider who is looking for yield generation.
+
+\subsubsection{Dynamic Delta Hedging}
+For the reasons outlined above, dynamic delta hedging emerges as a practical approach for managing risks in exotic LP positions, especially when advanced instruments like options are unavailable. This method involves continuously monitoring and adjusting hedge positions to neutralize the first-order sensitivities (deltas) of the portfolio value to changes in $S_x$ and $S_y$. By doing so, it aims to mitigate the directional components of impermanent loss, though it does not fully eliminate higher-order risks such as those captured by gamma.
+In our analysis, we focus on borrowed positions, where the initial exposure is already delta-hedged by shorting perpetual futures on the starting quantities ($x_0$ and $y_0$ for USD-neutral setups, or just one token if valuing in units of X or Y). This initial hedge removes the linear risk from the baseline allocation, leaving the non-linear IL driven by price movements within and beyond the liquidity range.
+The process works as follows: At each time step, recompute the current deltas $\Delta_x$ and $\Delta_y$ using the piecewise formulas derived earlier. The hedge adjustment is then made by holding positions in perpetual futures equal to $-\Delta_x$ for $S_x$ and $-\Delta_y$ for $S_y$. For example, if $\Delta_x > 0$, this implies shorting additional futures to offset the positive sensitivity. Mathematically, the total hedge position at time $t$ is:
+$$H_x(t) = -\Delta_x(t), \quad H_y(t) = -\Delta_y(t),$$
+with rebalancing triggered by price changes exceeding a threshold or at fixed intervals to balance accuracy and costs.
+This dynamic rebalancing approximates a hedge against IL by countering local linear risks as the cross price $p_t$ evolves. For small movements, it effectively stabilizes the position value around the fee-accruing core. However, in practice, discrete rebalancing introduces approximation errors, and costs such as gas fees on chain, slippage in illiquid perpetuals, and funding rates can erode benefits, particularly in high volatility environments.
+Pros of this approach include its feasibility with widely available perpetual futures on platforms like Binance, BitGet, Hyperliquid or dYdX, even for exotic tokens, and its ability to adapt to real time market conditions without relying on scarce options markets. On the downside, it leaves gamma exposed, meaning large price jumps or volatility spikes can still lead to unhedged losses, as the concavity of the LP value function (short-option-like) profits from low vol but suffers in high vol.
+For USD-neutral hedging, we adjust for both $S_x$ and $S_y$ to account for their independent volatilities and correlation. If valuing in token units (e.g., accumulating Y), hedge only the volatile token while accepting exposure to the numeraire.
+In the following empirical analysis, we will simulate this strategy using historical data for exotic pairs, evaluating its effectiveness in reducing IL through metrics like hedged vs. unhedged PNL, Sharpe ratio, and residual risk. This will highlight practical trade offs and guide optimal rebalancing frequencies.
+\newpage
+\section{Selection of Liquidity Positions}
+
+In the paper from Heimbach et al. \cite{heimbach2022}, the different problems to optimize in the liquidity provision cycle are presented, here i outline the ideas of the theoretical framework and the steps an LP has to follow when choosing where, when and how to provide liquidity. \newline
+The LP has to take several decision in order to provide liquidity in an optimal way:
+\begin{enumerate}
+    \item What should the center price $p_0$ be?
+    \item What should be the value of $p_{min}$ and $p_{max}$?
+    \item What is the likelihood that the price of a given asset will remain within a specified price range after a certain time?
+    \item How long to keep a position on?
+
+    \item What’s a realistic profit target?
+\end{enumerate}
+In Uniswap V3, the returns for LP positions are shaped by the interplay between impermanent loss and the fees collected from trading activity. The return metric $ R $ is defined to evaluate the performance of providing liquidity relative to a benchmark holding strategy, as follows:
+\begin{equation}
+    R(p_0, p_t, p_{min}, p_{max}, F) = \frac{V_{\text{LP}} + F - V_{\text{hold}}}{V_{\text{hold}}}
+\end{equation}
+
+where $ V_{\text{LP}} $ represents the value of the liquidity position at time $ t $, $ F $ denotes the accumulated fees earned during the provision period, and $ V_{\text{hold}} $ is the value of the initially deposited assets if they had been held outside the pool without providing liquidity. This formulation isolates the incremental return attributable to liquidity provision, abstracting away from the overall price appreciation or depreciation of the underlying cryptocurrencies relative to a fiat benchmark like the USD. By focusing on the decision to provide liquidity rather than mere asset holding, it provides a clearer assessment of the strategy's effectiveness.\newline
+Fees in Uniswap V3 are distributed proportionally among LPs who have allocated liquidity at the active trading price. The amount of fees an LP receives depends on several factors: the pool's trading volume, the share of active liquidity owned by the LP, and the chosen fee tier. Uniswap supports multiple fee tiers for the same asset pair, specifically $ f \in \{0.01\%, 0.05\%, 0.3\%, 1\%\} $, allowing pools to cater to different risk and volume profiles. Higher fee tiers may attract liquidity to more volatile pairs by offering greater compensation for risks, while lower tiers suit high volume, stable pairs.
+
+\subsection{Uniswap V3 Fees}
+Liquidity providers collect fees based on trading volume. The total amount of collected fees during a given time window depends on:
+\begin{enumerate}
+    \item The fee tier
+    \item The trading volume.
+    \item The total liquidity at the traded tick.
+    \item The LP position’s liquidity.
+    \item Fraction of time spent inside the range.
+    \item The total amount of time the LP position is deployed.
+\end{enumerate}
+
+We can separate the expression for the amount of fees collected into three components, which can be written as:
+
+\begin{equation}
+    F = (\text{fee tier}\cdot \frac{\text{Trading Volume}}{\text{Total Liquidity}})\cdot (\text{Position Liquidity}\cdot \frac{T_{range}}{T_{total}})\cdot T_{total}
+    \label{eq:LP_returns}
+\end{equation}
+
+$$(\text{fee tier}\cdot \frac{\text{Trading Volume}}{\text{Total Liquidity}}):= \text{Fee accrual rate}$$ 
+The fee tier, trading volume, and total liquidity are dictated by the AMMs smart contract and the market. Thus, when deploying liquidity, users should target Uniswap pools that optimize this quantity (ie. consider the volume, TVL and fee tier).
+$$(\text{Position Liquidity}\cdot \frac{T_{range}}{T_{total}}):=\text{Effective liquidity}$$
+The effective size of a position is the product of the amount of assets locked in each tick of the position and the total time spent inside the range of the liquidity position. This is controlled by the liquidity provider when the LP position is deployed, $T_{range}$ is the time spent inside the active liquidity range.
+Duration $T_{total}$: this is simply the amount of time a position is held before it is removed or rebalanced. \newline
+Since the fee accrual rate is not under the control of the user, the only way to optimize a LP position is to optimize the effective liquidity and remain in the position for a duration that maximizes returns.
+
+\subsection{Dynamics of an LP Position}
+The feature that fees are only collected as long as the price remains within a certain bandwidth, necessitates the liquidity provider to gauge the probability of this. This requirement naturally suggests adopting methods used for pricing financial derivatives where short and medium term price predictions are essential. The most well-known model for modeling the future development of the price of a risky asset $S_t$ is the Black-Scholes market model.
+To model the evolution of an LP position in Uniswap v3, we begin by representing the prices of the two underlying assets, denoted as $S_x$ and $S_y$, using correlated geometric Brownian motions. The cross price $p_t = S_x(t) / S_y(t)$ determines the state of the LP position, including its value and whether it is in-range for fee collection.
+Under GBM, the dynamics are given by
+\begin{equation}
+   dS_x = \mu_x S_x \, dt + \sigma_x S_x \, dW_x, \quad dS_y = \mu_y S_y \, dt + \sigma_y S_y \, dW_y 
+\end{equation}
+where $\mu_x$ and $\mu_y$ are the drifts, $\sigma_x$ and $\sigma_y$ are the volatilities, and $dW_x$, $dW_y$ are Wiener processes with correlation $\rho = \langle dW_x, dW_y \rangle / dt$. This setup captures the positive-only nature of prices and allows for correlation between assets, which is common in cryptocurrency pairs.
+Applying Itô's lemma to $p_t$, we derive its dynamics as a GBM with adjusted parameters:
+\begin{equation}
+   dp_t = (\mu_x - \mu_y + \sigma_y^2 - \rho \sigma_x \sigma_y) p_t \, dt + \sqrt{\sigma_x^2 + \sigma_y^2 - 2 \rho \sigma_x \sigma_y} \, p_t \, dW_p 
+\end{equation}
+where $dW_p$ is a new Wiener process. This shows that the effective volatility of $p_t$ depends on the individual volatilities and their correlation.
+Impermanent loss arises from deviations in $p_t$, and simulating paths of $p_t$ under GBM allows us to track the position's evolution, including time spent in-range and expected losses.
+While GBM is analytically tractable and widely used for its simplicity, it has limitations: it assumes constant volatility and drift, ignoring  observed phenomena like volatility clustering, jumps, and fat-tailed returns present in cryptocurrencies. These can lead to underestimation of extreme events over longer periods.
+For short-term forecasting, however, GBM is reasonable. Over brief horizons (e.g., days to weeks), volatility changes slowly, and the impact of jumps or mean reversion is less pronounced, making the constant-parameter assumption viable for initial approximations and quick simulations. For longer terms, we can extend to models like Heston stochastic volatility, as discussed later.
+
+\subsection{Probability In-Range and Expected Time In Range}
+To assess the performance of an LP position, we evaluate the probability that the cross price $p_t$ remains within the selected liquidity range $[p_{min}, p_{max}]$ at time $t$, termed the in-range probability. This metric indicates the likelihood of fee accrual at a specific future time. We also compute the expected time spent in range up to horizon $T$, which directly influences cumulative fees.
+Assuming symmetric ranges around the initial price $p_0$, we set $p_{min} = p_0 / \alpha$ and $p_{max} = p_0 \alpha$ with $\alpha > 1$. Under the GBM dynamics for $p_t$,
+$$dp_t = \mu_p p_t \, dt + \sigma_p p_t \, dW_t,$$
+
+This PDE has closed form solution:
+\begin{equation}
+    p_t = p_0\cdot \exp \left(\left( \mu_p - \frac{\sigma_p^2}{2}\right)t + \sigma_pW_t\right)
+    \label{GBM_solution}
+\end{equation}
+where $\mu_p = \mu_x - \mu_y + \sigma_y^2 - \rho \sigma_x \sigma_y$ and $\sigma_p = \sqrt{\sigma_x^2 + \sigma_y^2 - 2 \rho \sigma_x \sigma_y}$, we employ Monte Carlo simulation to estimate these quantities.
+We simulate $N$ independent paths of $p_t$ using Euler discretization over $M$ time steps $\Delta t = T/M$. For each path $k=1,\dots,N$, initialize $p_0^{(k)} = p_0$, and update
+$$p_{t_{j+1}}^{(k)} = p_{t_j}^{(k)} \exp\left( (\mu_p - \sigma_p^2 / 2) \Delta t + \sigma_p \sqrt{\Delta t} \, Z_j^{(k)} \right),$$
+where $Z_j^{(k)} \sim \mathcal{N}(0,1)$.\newline
+The in range probability at time $t_j = j \Delta t$ is estimated as
+$$\mathbb{P}_{\text{range}}(t_j; \alpha) = \frac{1}{N} \sum_{k=1}^N \mathbb{I}\left( p_0 / \alpha < p_{t_j}^{(k)} < p_0 \alpha \right),$$
+where $\mathbb{I}$ is the indicator function.\newline
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+$\alpha$ & P(range) 1 day & P(range) 7 days & P(range) 45 days & P(range) 120 days \\ \hline
+1.05 & 74.33\% & 33.31\% & 13.17\% & 7.92\% \\ \hline
+1.1 & 97.38\% & 59.83\% & 25.50\% & 15.60\% \\ \hline
+1.2 & 100.00\% & 89.05\% & 46.89\% & 29.45\% \\ \hline
+1.5 & 100.00\% & 99.94\% & 83.78\% & 60.10\% \\ \hline
+2 & 100.00\% & 100.00\% & 98.22\% & 84.90\% \\ \hline
+\end{tabular}
+\caption{Probability of ending in range for various $\alpha$ and horizons ($\sigma_x = 80\%$/year, $\sigma_y = 20\%$/year)}
+\label{table:pitm_montecarlo}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/p_itm_negativecorr.png}  % Replace with your image file
+        \caption{\footnotesize $\rho = -0.5$.}
+        \label{fig:p_itm_negativecorr}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/p_itm_positivecorr.png}  % Replace with your image file
+        \caption{\footnotesize $\rho = 0.5$.}
+        \label{fig:p_itm_positivecorr}
+    \end{subfigure}
+    \caption{\footnotesize Estimation of ITM probability obtained from Montecarlo simulation of 10000 paths. $\sigma_x=0.8, \sigma_y=0.1$}
+    \label{fig:pitm_montecarlo}
+\end{figure}
+
+
+The expected time in range up to $T$ is then
+$$\mathbb{E}[T_{\text{range}}(T; \alpha)] = \sum_{j=1}^M \mathbb{P}_{\text{range}}(t_j; \alpha) \Delta t.$$
+The in range time fraction is $\mathbb{E}[T_{\text{range}}]/T$, useful for estimating proportional fee collection.\newline
+Figure \ref{fig:pitm_montecarlo} shows the estimated in range probability over time for various range widths, obtained from Monte Carlo simulations of 10,000 paths under GBM dynamics for the cross price $p_t$. Panel (a) corresponds to negative correlation $\rho$ = -0.5, and panel (b) to positive $\rho$ = 0.5, with volatilities $\sigma_x = 80\%$ and $\sigma_y = 10\%$. The curves decay faster for smaller $\alpha$ and negative $\rho$, reflecting higher effective volatility $\sigma_p$ that pushes $p_t$ out of range more quickly. Intuitively, a narrower range is like a tighter target harder to stay within as time passes, especially under high volatility, where paths wander more erratically.
+
+Figure \ref{fig:E_time} depicts the expected relative time in range $\frac{\mathbb{E}[T_{\text{range}}]}{T}$ as a function of horizon T, again for different range width and the two correlation cases. Similar to in range probability, positive correlation yields higher values, as the reduced $\sigma_p$ keeps paths within bounds longer, while negative correlation lowers the fraction, emphasizing the sensitivity to joint asset movements. This can be thought of as the "stability premium".
+
+Figure \ref{fig:E_time_vs_alpha} illustrates the proportion of time in range divided by $\alpha$ after a fixed T, versus $\alpha$ itself, from simulations. This normalized metric highlights efficiency across ranges: for larger $\alpha$, the value stabilizes, but correlation effects persist, with positive $\alpha$ enhancing the ratio by stabilizing $p_t$. Intuitively, dividing by $\alpha$ levels the playing field, showing how much you get per unit of range width, wider ranges don't proportionally increase time in range due to diminishing returns, but correlations tweak this efficiency like hidden multipliers.
+
+Positive correlations ($\rho \geq 0$) between the assets reduce the effective volatility $\sigma_p$ of the cross price, as movements tend to offset less, leading to more time spent in range and higher fee accrual potential imagine two dancers moving in sync, staying within the spotlight longer. Conversely, negative correlations ($\rho \leq 0$)) amplify $\sigma_p$, increasing the likelihood of range exits and thus reducing expected time in range, which heightens impermanent loss risks in exotic pairs.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/E_time_negativecorr.png}  % Replace with your image file
+        \caption{\footnotesize $\rho = -0.5$.}
+        \label{fig:E_time_negativecorr}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/E_time_positivecorr.png}  % Replace with your image file
+        \caption{\footnotesize $\rho = 0.5$.}
+        \label{fig:E_time_positivecorr}
+    \end{subfigure}
+    \caption{\footnotesize Estimation of expected relative time in range obtained from Montecarlo simulation of 10000 paths. $\sigma_x=0.8, \sigma_y=0.1$}
+    \label{fig:E_time}
+\end{figure}
+
+
+This simulation-based approach accurately captures the full drift and volatility effects. In practice, choose $N \geq 10^4$ and $M \geq 100$ for convergence, with parameters like $\sigma_p$ estimated from historical data on $S_x$ and $S_y$. The method naturally handles correlation through the effective $\sigma_p$, providing flexibility for sensitivity analysis.
+In our analysis we use GBM as a benchmark model, but with this Montecarlo approach, any model can be simulated for better assessing dynamics and probabilities.
+
+\begin{figure}
+\centering
+\includegraphics[width=0.8\columnwidth]{images/rel_time_alpha.png}
+\caption{\footnotesize Simulation of the proportion of time in range divided by alpha after time T obtained from Montecarlo simulation of 10000 paths. $\sigma_x=0.8, \sigma_y=0.1$.}
+\label{fig:E_time_vs_alpha}
+\end{figure}
+
+\subsection{Expected Time in Range under Heston Model}
+
+For stochastic volatility on $p_t$:
+\begin{equation}
+dp_t = \mu p_t \, dt + \sqrt{v_t} p_t \, dW_{1,t}, \quad dv_t = \kappa (\theta - v_t) \, dt + \xi \sqrt{v_t} \, dW_{2,t},
+\end{equation}
+the characteristic function $\phi(\omega, t)$ is as given earlier. The CDF $F(z, t) = P(\ln p_t \leq z)$ uses Gil-Pelaez inversion:
+\begin{equation}
+F(z, t) = \frac{1}{2} - \frac{1}{\pi} \int_0^\infty \Re \left[ \frac{e^{-i \omega z} (\phi(\omega, t) - 1)}{i \omega} \right] d\omega,
+\end{equation}
+or stable form
+\begin{equation}
+F(z, t) = \frac{1}{2} - \frac{1}{\pi} \int_0^\infty \frac{\Im [ e^{-i \omega z} \phi(\omega + i/2, t) ] }{\omega} d\omega.
+\end{equation}
+Then $P_{\text{ITM}}(t; \alpha) = F(\ln(\alpha p_0), t) - F(\ln(p_0 / \alpha), t)$, and
+\begin{equation}
+E[T_{\text{ITM}}(T; \alpha)] = \int_0^T P_{\text{ITM}}(s; \alpha) \, ds,
+\end{equation}
+numerically integrated, with each $P$ requiring Fourier evaluation (e.g., adaptive quadrature).
+
+For separate Heston on $S_x, S_y$ with cross-correlation, simulation is necessary: Euler-discretize paths, compute $p_t$, and accumulate as in GBM Monte Carlo.
+
+\subsection{Estimation of Drift, Volatilities, and Correlation for Asset Processes}
+
+To estimate the parameters for the stochastic processes of \(S_x(t)\) and \(S_y(t)\), we rely on historical price data, typically daily closing prices over a suitable window (e.g., 1-5 years, depending on the asset's history and market regime). For cryptocurrencies in exotic pairs, sources like CoinGecko, Yahoo Finance, or CryptoDataDownload provide free historical USD prices in CSV format. Calibration involves computing statistics from log returns, assuming a geometric Brownian motion base model, which can be extended to stochastic volatility if needed.
+
+Let \(S_x^i\) and \(S_y^i\) be the daily closing prices for days \(i = 1, \dots, n\). The daily log returns are
+
+\[
+r_x^i = \log\left( \frac{S_x^i}{S_x^{i-1}} \right), \quad r_y^i = \log\left( \frac{S_y^i}{S_y^{i-1}} \right).
+\]
+
+The drift \(\mu_x\) (historical, for simulation) is the annualized mean:
+
+\[
+\mu_x = 365 \cdot \frac{1}{n-1} \sum_{i=2}^n r_x^i,
+\]
+
+The volatility \(\sigma_x\) is the annualized standard deviation:
+
+\[
+\sigma_x = \sqrt{365} \cdot \sqrt{\frac{1}{n-2} \sum_{i=2}^n (r_x^i - \bar{r}_x)^2},
+\]
+
+where \(\bar{r}_x\) is the sample mean of \(r_x^i\), and similarly for \(\sigma_y\).
+
+The correlation \(\rho\) is
+
+\[
+\rho = \frac{\sum_{i=2}^n (r_x^i - \bar{r}_x)(r_y^i - \bar{r}_y)}{\sqrt{\sum_{i=2}^n (r_x^i - \bar{r}_x)^2 \sum_{i=2}^n (r_y^i - \bar{r}_y)^2}}.
+\]
+
+For robustness, use rolling windows or GARCH for time-varying vols, calibrated via maximum likelihood (e.g., in Python's arch library). Implied vols from options (if available for proxies like ETH/BTC) can adjust for forward-looking estimates. In practice, download data from reliable APIs (e.g., yfinance for BTC-USD, ETH-USD) and compute in code.
+
+\subsection{Simplified analysis}
+ Following Lambert analysis \cite{lambert2021_optimal_liquidity}, if we choose the volatility $\sigma$ of a crypto asset like Ether to be between 100\% to 150\% per year (using data from Genesis Volatility or the Opyn options analytics page) and a drift term $\mu$ of 1\% per year, for small drifts we can approximate equation \eqref{GBM_solution} in first degree, with Taylor expansion:
+
+ \begin{equation}
+     p_t \approx p_0\left( 1+\sigma_p W_t\right)=p_0 + p_0\sigma_pW_t
+ \end{equation}
+
+ we define $p_0\sigma_pW_t$ Expected move as:
+
+ \begin{equation}
+     \text{Expected Move}_T = \mathbb{E}[p_0\sigma_pW_T]=p_0\sigma_p\sqrt{T}
+ \end{equation}
+
+ Hence, if one were to create a LP position starting at a price $p_0$, there would be a 68\% chance (ie. 1 standard deviation) that the asset will move less than $p_0\sigma_p\sqrt{T}$ away from the starting price, either up or down.\newline
+
+The probability that the position remains in range at time $ t $ (in years) for a symmetric range with factor $\alpha > 1$ ($ p_{\min} = p_0 / \alpha $, $ p_{\max} = p_0 \alpha $) is
+$$P_{\text{range}}(t; \alpha) = P\left( p_0 / \alpha < p_t < p_0 \alpha \right).$$
+Under GBM we have that:
+$$P_{\text{range}}(t; r) = \Phi\left( \frac{\ln r + (\mu - \sigma^2/2) t}{\sigma \sqrt{t}} \right) - \Phi\left( \frac{-\ln r + (\mu - \sigma^2/2) t}{\sigma \sqrt{t}} \right),$$
+where $\Phi$ is the standard normal CDF and r is the scaling factor $r=\sqrt{\frac{p_{max}}{p_{min}}}$.
+For low $\mu$, this simplifies to
+$$P_{\text{range}}(t; r) \approx 2 \Phi\left( \frac{\ln r}{\sigma \sqrt{t}} \right) - 1 = \text{Erf}\left( \frac{\ln r}{\sigma \sqrt{2 t}} \right),$$
+verified by noting $\text{Erf}(x) = 2 \Phi(x \sqrt{2}) - 1$.
+Narrow ranges (small $r$) yield high fees per unit liquidity when in range but low $P_{\text{range}}$, increasing IL risk. Wider ranges ensure more consistent fees but dilute returns. Optimal $r$ maximizes expected return $ E[R] = E[F /V_{\text{hold}}] + E[\text{IL}] $ while minimizing the impermanent loss risk.
+Even though these assumptions seems a little far fetched, table \ref{table:pitm_simplified} represent in range probabilities calculated with the simpliefied formula, comparing with the Montecarlo simulations results from table \ref{table:pitm_montecarlo}, we can see that the two are pretty close.
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+ $r$ & P(range) 1 day & P(range) 7 days & P(range) 45 days & P(range) 120 days \\ \hline
+1.05 & 74.17\% & 33.08\% & 13.38\% & 8.22\% \\ \hline
+1.1 & 97.28\% & 59.61\% & 25.80\% & 15.98\% \\ \hline
+1.2 & 100.00\% & 88.96\% & 47.11\% & 30.02\% \\ \hline
+1.5 & 100.00\% & 99.96\% & 83.86\% & 60.89\% \\ \hline
+2 & 100.00\% & 100.00\% & 98.33\% & 85.73\% \\ \hline
+\end{tabular}
+\caption{Probability of ending in range for various $r$ and horizons}
+\label{table:pitm_simplified}
+\end{table}
+To find the fraction of the total amount of time spent within that range, we need to integrate the expression for Prob(in range) over all times and divide by T:
+
+\begin{equation}
+    \frac{T_{range}}{T}=\frac{\int_0^T P_{range}dt}{\int_0^Tdt}
+\end{equation}
+
+Solving this integral using an Erf integral table (see Ng \& Geller, 1971 \cite{ng1971}) we obtain, using $r = \sqrt{\frac{p_{max}}{p_{min}}}$:
+
+\begin{equation}
+    \frac{T_{range}}{T}=\frac{(ln^2(r) + \sigma^2T)Erf(\frac{ln(r)}{\sigma\sqrt{2T}})+ln(r)\cdot\left(\sqrt{\frac{2T}{\pi}}\sigma e^{-\frac{ln^2(r)}{2r^2T}}-ln(r)\right)}{\sigma^2T}
+\end{equation}
+To obtain this equation, these assumptions were made in the simplified analysis:
+\begin{enumerate}
+    \item the starting position is the geometric mean of the upper and lower ticks.
+    \item The timescale $\sigma^2T$ is small compared to $ln(r)$.
+    \item The price drift term $\mu$ is equal to 0. This is also a valid assumption since the annual drift is a few percent per year at the most, and the effects are negligible compared to those of volatility on short time scales.
+\end{enumerate}
+
+\subsubsection{Capital Efficiency}
+In Uniswap v2, liquidity is spread across all possible prices, meaning that a large fraction of the liquidity provided may never be “used” because price may not be traded at that specific price. Uniswap v3 set out to fix these capital inefficiency issues by allowing LP to deploy concentrated liquidity between any two “price ticks”.
+In Uniswap V3, each tick i defines a specific price $p=1.0001^i$. The index i can be any integer number between (-887272, 887272). When deploying a position, a liquidity provider defines a lower tick $i_l$ and an upper tick $i_u$ so that liquidity is deployed between a lower and upper price $(p_{min},p_{max})$ equal to $1.0001^{i_l}$ and $1.0001^{i_u}$.
+
+Hence, the effective liquidity of the position will be much larger for narrow ranges. Since the total liquidity L is “split” equally into small 
+$\delta L = \frac{L}{N}$ chunks between all ticks between the upper and lower limits, we can compare the relative capital efficiency of a ranged Uniswap v3 position and a corresponding Uniswap v2 position (the “Full Range” option on the Uniswap v3 interface deploys liquidity between the (-887,272, +887,272) ticks. For a ranged position, the number of liquidity ticks N in a position is given by:
+\begin{equation}
+    \begin{split}
+            \text{Number of ticks N} & = \frac{i_u - i_l}{t_s} \\
+            & = \frac{\ln{p_{max}} -\ln{p_{min}}}{\ln{1.0001}^{t_s}} \\
+            & = \frac{2 \ln{(\sqrt{\frac{p_{max}}{p_{min}}})}}{t_s \ln{1.0001}}\\
+            & = \frac{20001}{t_s}\cdot \ln{r}
+    \end{split}
+\end{equation}
+Where $t_s$ is the tick spacing defined at the pool creation.
+\subsubsection{Closed Form Expression for Effective Liquidity}
+We expect the Effective Liquidity to be a combination of both the capital efficiency of the position and the relative amount of time spent in the money. So, combining the expression for the liquidity and the time spent in the money in equation \eqref{eq:LP_returns}, we obtain the following expression:
+\begin{equation}
+    F=(\text{fee accrual rate})\cdot \left[ \frac{20001}{t_s}\cdot \ln{r}\cdot \frac{T_{range}}{T}\right]\cdot T
+\end{equation}
+
+The fee accrual rate is not under the control of the liquidity provider, and requires modeling of expected volume and study of the specific liquidity profile of its own. Only the range factor $\alpha$ and the amount of time a position is maintained is under the control of the LP provider.
+We can simplify the expression for the LP returns to get:
+\begin{equation}
+    F \propto \sqrt{\frac{8}{\pi}}\cdot \frac{\sqrt{T}}{\sigma} + \mathcal{O}(r-1)
+\end{equation}
+
+These results are a bit surprising for the following reasons:
+\begin{enumerate}
+    \item LP returns have a $\sqrt{T}$ dependence. For example, to double the fees collected after 1 day, one needs to wait 3 extra days. We’ll call this phenomenon the radical liquidity drag.
+    \item LP returns are maximized for very narrow ranges: LP returns for range factors smaller than 1.05 should lead to a $\sqrt{T}$ dependence that outperforms wider liquidities. Smaller range also helps reduce impermanent loss.
+    \item LP returns become linear in time for larger range factors ($\alpha>2$).
+\end{enumerate}
+
+It is important to note that impermanent loss will be much lower for tight range that are rebalanced frequently compared with wider ranges.
+
+\subsubsection{Concrete Application for Range Selection}
+
+The simplified analysis provides practical tools for LPs to select optimal liquidity ranges by balancing expected fee income against impermanent loss risks. Concretely, the process involves the following steps:
+
+First, estimate the key parameters from historical data: drifts \(\mu_x, \mu_y\), volatilities \(\sigma_x, \sigma_y\), and correlation \(\rho\) between the two tokens. For exotic pairs, use time series of USD prices to compute the effective volatility \(\sigma_p = \sqrt{\sigma_x^2 + \sigma_y^2 - 2\rho\sigma_x\sigma_y}\) of the cross price \(p_t\).
+
+Next, for candidate range widths \(\alpha\) (e.g., symmetric around current \(p_0\)), calculate the expected relative time in range \(E[T_{range}]/T\) using the GBM approximation or simulations, as shown in Figures \ref{fig:E_time}. This metric proxies for fee accrual, since fees are proportional to time active and trading volume.
+
+Then, estimate the expected impermanent loss over horizon \(T\) by integrating the IL function over simulated paths or using approximations under the model. Compare this to projected fees, which scale with \(\alpha^{-1}\) due to capital efficiency (narrower ranges concentrate liquidity, boosting fees per unit capital).
+
+Finally, optimize by selecting the \(\alpha\) that maximizes a utility metric, such as expected return minus a risk penalty (e.g., Sharpe ratio analogue: fees minus IL, divided by IL volatility). For instance, in high-correlation scenarios (\(\rho > 0\)), wider ranges may suffice to maintain high time in range with lower IL sensitivity, while negative \(\rho\) favors narrower, actively managed positions. This iterative approach, validated via backtesting, helps tailor ranges to market conditions and LP risk tolerance.
+\newpage
+
+\section{Uniswap v3 Liquidity Positions as Perpetual Put and Call Options}
+
+A key insight is that LP positions in Uniswap v3 exhibit payoff structures analogous to traditional financial options, particularly perpetual covered calls and cash-secured puts. In this section, we explore this parallel, beginning with the concept of range orders and extending to the perpetual nature of these positions.
+
+This section is mainly presented to show LP positions beyond their role in facilitating trades and yield generation, Uniswap v3 LP positions can be regarded as a novel financial primitive in the DeFi ecosystem. Unlike traditional assets or derivatives that are typically issued by centralized entities, these positions emerge organically from the protocol's mechanics, allowing anyone to create customized exposure through concentrated liquidity ranges. This democratizes access to option-like instruments, where the payoff depends on price movements within defined bounds, blending elements of options, bonds, and yield-bearing assets into a single, on-chain construct.
+
+Viewing LP positions not merely as yield generation opportunities but as versatile financial instruments opens up new strategic possibilities. For instance, by providing liquidity in specific ranges, users can effectively sell volatility, collecting fees as a premium while accepting the risk of impermanent loss—much like writing options. This perspective shifts the focus from passive income to active portfolio management, where LPs can be integrated into broader strategies.
+
+Such positions offer tools for hedging and risk mitigation. For example, an investor holding a long position in a token could use an LP setup as a covered call equivalent, capping upside potential in exchange for fee income to offset potential downturns. Similarly, they can help control portfolio volatility by providing counterbalancing exposures: in a volatile pair, a narrow-range LP acts like a short gamma play, profiting from stability while hedging against extreme moves when combined with other derivatives like perpetual swaps. Beyond hedging, these instruments enable synthetic replication of complex payoffs, such as straddles or strangles, by combining multiple LP ranges, allowing for tailored risk profiles without relying on off-chain markets.
+
+Despite these potentials, the full implications of Uniswap v3 positions as financial primitives remain largely unexplored. Current research, including analogies to perpetual options, scratches the surface, but deeper investigations are needed—such as pricing under advanced stochastic models, integration with portfolio optimization frameworks, or regulatory considerations for institutional adoption. As DeFi evolves, there is ample room for further studies to unlock their role in efficient, decentralized financial systems.
+
+\subsection{Concentrated Liquidity and Range Orders}
+
+In Uniswap v3, LPs specify a price interval $[p_a, p_b]$ for their liquidity deployment. When concentrated in a narrow range---approaching a single tick---the position functions similarly to a range order. For instance, providing liquidity solely above the current spot price effectively creates a sell limit order for token $X$ (e.g., ETH) against token $Y$ (e.g., DAI), converting $X$ to $Y$ as the price rises through the range.
+
+Consider a position deployed in a single-tick range above the spot price. As the price crosses the lower bound of the tick, trading activity automatically swaps the provided $X$ tokens for $Y$, mimicking the execution of a limit order. This mechanism improves upon traditional limit orders by accruing fees during the conversion process, provided there is sufficient trading volume.
+
+\subsection{Analogy to Covered Calls and Cash-Secured Puts}
+
+A Uniswap v3 LP position in a single-tick range above the current spot price resembles a covered call option on $X$ with strike price equal to the geometric mean of the tick bounds, $\sqrt{p_{min} p_{max}}$. In a covered call, the writer holds the underlying asset and sells a call option, obligating them to deliver the asset if the price exceeds the strike. Similarly, in the LP position, the provided $X$ tokens are held in the pool and converted to $Y$ only if the price surpasses the effective strike.
+
+By put-call parity, which states that $C - P = S - K$ where $C$ and $P$ are call and put prices, $S$ is the spot price, and $K$ is the strike, this covered call payoff is equivalent to a short cash-secured put. Thus, an LP position below the spot price behaves as a short put secured by $Y$ tokens.
+
+\begin{figure}
+\centering
+\includegraphics[width=1\columnwidth]{images/LPcoverdcall.PNG}
+\caption{\footnotesize Payoff function of an LP position for a range and for single tick liquidity }
+\label{fig:univ3}
+\end{figure}
+
+Note that, due to put-call parity, the payoff diagram for a covered call is exactly the same as for a cash-secured put. So, depending on whether the strike tick is above or below the current spot price when liquidity was deployed, a Uniswap v3 liquidity position behaves as a short cash-secured put or a covered call.
+
+Unlike standard options, Uniswap v3 positions have no expiration date; conversions occur perpetually as the price traverses the range. This perpetuity distinguishes them from finite-maturity options priced via models like Black-Scholes, which incorporate time to expiration and implied volatility.
+
+\subsection{Synthetic Options via Put-Call Parity}
+Building upon the foundational analogy between Uniswap v3 liquidity positions and options, we now examine how synthetic options can be constructed using put-call parity. This parity relation provides a mechanism to replicate option payoffs through combinations of calls, puts, and the underlying asset, enabling the synthesis of various strategies within the Uniswap v3 framework.
+Put-call parity asserts that the difference between the price of a European call option $C$ and a European put option $P$ with the same strike $K$ and maturity is equal to the difference between the current spot price $S$ of the underlying asset and the present value of the strike:
+$$C - P = S - Ke^{-rT},$$
+where $r$ is the risk-free rate and $T$ is the time to expiration. For simplicity, assuming $r = 0$ (common in cryptocurrency contexts where borrowing rates may be negligible or zero), this simplifies to:
+$$C - P = S - K.$$
+This relation implies several synthetic equivalents:
+
+A synthetic long stock position can be created by buying a call and selling a put: the payoff mirrors holding the underlying asset.
+Conversely, a synthetic short stock is a short call plus a long put.
+A covered call (long stock + short call) equates to a short put, as previously discussed.
+A short call can thus be synthesized as a short put combined with a short stock position.
+
+In Uniswap v3, where LP positions inherently resemble short puts (for ranges below the spot) or covered calls (above the spot), synthetic short calls can be formed by combining an LP position with a short position in the underlying token $X$. For instance, an LP position in a range above the current price acts as a covered call, which, per parity, is a short put. Adding a short $X$ position transforms this into a short call:
+$$\text{Short Call} = \text{Short Put} + \text{Short Stock}.$$
+This synthesis cancels the implicit long stock exposure in the covered call, yielding a pure short call payoff.
+To implement the short stock leg on-chain, several DeFi protocols can be utilized:
+
+Borrowing $X$ from lending platforms like Aave or Compound, then selling it for $Y$, requires over-collateralization (typically $>100\%$ of the borrowed amount) to mitigate liquidation risks.
+Using perpetual futures on platforms like dYdX or Futureswap to establish a short position with leverage, though this introduces liquidation thresholds.
+
+\subsection{Creating Perpetual Options}
+
+\subsubsection{Value of a short call}
+A user that sells a call option at strike K must sell the underlying asset if the asset price p is higher than the strike price K at expiration. When the user does possess the asset, the position is called a covered call.
+
+If we assume that the risk-free interest rate is 0 and we ignore the premium received when the option was sold, the total value of the option position and the underlying asset can be derived from the Black-Scholes model:
+
+\begin{equation}
+    C(S,t)=\frac{S-K}{2} + \frac{S}{2}\text{Erf}\left( 
+    \frac{ln(\frac{S}{K} )+\frac{\sigma^2}{2}T}
+    {\sigma \sqrt{2T}}\right)
+    - \frac{K}{2}\text{Erf} \left(
+    \frac{ln(\frac{S}{K} )-\frac{\sigma^2}{2}T}
+    {\sigma \sqrt{2T}}
+    \right)
+\end{equation}
+
+
+\subsubsection{Value of a Uniswap V3 short put}
+We can rewrite the value of an uniswap position (normalized with $L=1$) in terms of the scaling factor $r=\sqrt{\frac{p_{max}}{p_{min}}}$ and the strike price $K=\sqrt{p_{max}p_{min}}$ to get:
+
+\begin{equation}
+    V_{funded}^{(y)} (p_t) = \frac{2\sqrt{p_t Kr}-p_t-K}{r-1} \quad for \quad p_t \in [p_{min},p_{max}]
+\end{equation}
+
+As we can see in figure \ref{fig:dte1}, the Black Scholes value of a put and an uniswap V3 position are almost the same.
+
+
+
+\subsubsection{Black-Scholes to Uniswap V3 Comparison}
+
+So what we see here is that the shape of a Uniswap v3 LP position at a given scaling factor $r$ is very similar to that of a covered call option at a time $T_r$ away from expiration.\newline
+Noting that:
+\begin{equation}
+    C(K,t) = K\sigma \sqrt{\frac{t}{2\pi}}
+\end{equation}
+we find that the effective days to expiration $T_r$ is:
+\begin{equation}
+    T_r = \frac{2\pi}{\sigma^2}\left( \frac{\sqrt{r}-1}{\sqrt{r}+1}\right)^2
+\end{equation}
+Inverting this, we can also find what scaling factor $T_r$ corresponds to a covered call option a time T from expiration:
+\begin{equation}
+    r_T =\left( \frac{1+\sigma \sqrt{\frac{T}{2\pi}}}{1-\sigma \sqrt{\frac{T}{2\pi}}} \right)^2
+\end{equation}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/dte1.png}  % Replace with your image file
+        \caption{\footnotesize $DTE=1;\quad r = 1.087$.}
+        \label{fig:dte1}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/dte7.png}  % Replace with your image file
+        \caption{\footnotesize $DTE=7;\quad r = 1.248$.}
+        \label{fig:dte7}
+    \end{subfigure}
+    \caption{\footnotesize UNIv3 position and Black-scholes short put value comparison. Strike K=1 , volatility $\sigma=100\%$}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/dte30.png}  % Replace with your image file
+        \caption{\footnotesize $DTE=30;\quad r = 1.583$.}
+        \label{fig:dte30}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.45\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/bs-univ3-error.png}  % Replace with your image file
+        \caption{\footnotesize Error between BS short put value and univ3 position.}
+        \label{fig:bs-univ3-error}
+    \end{subfigure}
+    \caption{\footnotesize UNIv3 position and Black-Scholes short put value comparison, error function.}
+\end{figure}
+
+\begin{table}
+    \begin{minipage}{0.45\textwidth}
+        \centering
+        \begin{tabular}{|c|c|}
+        \hline
+             DTE & $r_T$ \\ \hline
+             1 & 1.09 \\ \hline
+             7 & 1.25 \\ \hline
+             30 & 1.58 \\ \hline
+             45 & 1.76 \\ \hline
+             90 & 2.23 \\ \hline
+             180 & 3.16 \\ \hline
+             365 & 5.42 \\ \hline
+        \end{tabular}
+        \caption{effective scaling factor for covered call options with a given DTE.}
+        \label{tab:placeholder-left}
+    \end{minipage}
+    \hfill  % Horizontal space between the minipages
+    \begin{minipage}{0.45\textwidth}
+        \centering
+        \begin{tabular}{|c|c|}
+        \hline
+             r & DTE \\ \hline
+             1.02 & 0.06 \\ \hline
+             1.05 & 0.36 \\ \hline
+             1.1 & 1.3 \\ \hline
+             1.2 & 4.76 \\ \hline
+             1.5 & 23.4 \\ \hline
+             2 & 67.5 \\ \hline
+             5 & 335 \\ \hline
+        \end{tabular}
+        \caption{Effective days to expiration for a Uniswap v3 position with a scaling factor r.}
+        \label{tab:placeholder-right}
+    \end{minipage}
+\end{table}
+\subsection{Uniswap v3 options with specific DTE and delta}
+Differentiating equation \eqref{V_t_funded} with respect to the price $p_t$, we find the sensitivity of the position value to movements in $p_t$:
+
+\begin{equation}
+    \Delta^{(y)}_{funded} = \frac{\partial V_{funded}^{(y)}}{\partial p_t} =
+    \begin{cases}
+        \frac{1}{\sqrt{p_t}} - \frac{1}{\sqrt{p_{max}}} & p_t \in [p_{min},p_{max}] \\
+        \frac{1}{\sqrt{p_{min}}} - \frac{1}{\sqrt{p_{max}}} & p_t \leq p_{min} \\
+        \sqrt{p_{max}} - \sqrt{p_{min}} & p_t \geq p_{max}
+    \end{cases}
+\end{equation}
+
+Now we can rewrite this in terms of scaling factor r and strike price K, in order to obtain:
+
+\begin{equation}
+    \Delta^{(y)}_{funded} = \frac{\sqrt{r \cdot \frac{K}{p_t}} - 1}{r-1}
+\end{equation}
+
+Remembering that an at the money option theoretically has a delta of 0.5, if we substitute the strike K as the current price P in the expression for the delta of an LP position, we only get 0.5 when $r \to 1 + \epsilon$ for small $\epsilon$:
+
+\begin{equation}
+    \Delta^{(y)}_{funded}(K) = \frac{\sqrt{r}-1}{r-1}=\frac{\sqrt{1 + \epsilon}-1}{1 + \epsilon -1} = \frac{1}{2} - \frac{\epsilon}{8} + \frac{\epsilon^2}{16}
++...\end{equation}
+
+Having established the relationship between a Uni v3 LP position ratio $r_T$ and a number of days to expiration DTE above, we can next find how to deploy a Uni v3 LP position so that the delta of the position is any arbitrary value between 0 and 1.
+
+In particular, if we aim to have a delta equal to $\Delta_p$, we must use the scaling factor $r_T$ to find the strike price $K_{\Delta}$ such that:
+\begin{equation}
+    K_{\Delta} = p_t \cdot \frac{(\Delta_pr_T - \Delta_p + 1)^2}{r_T}
+\end{equation}
+
+It is easy to verify that we recover the upper and lower tick for $K_{\Delta}$ when  $\Delta_p$ is equal to 0 and 1, respectively.
+
+Option writers can deploy short options positions between any two assets, for any ‘effective’ expiration time, at any delta, and without the need to deploy an intermediary protocol.
+
+What does that all mean?
+
+\begin{itemize}
+    \item Fixed-DTE options: Uniswap v3 LP positions have the potential to be a new financial primitive. While a single-tick position is still identical to a regular option, extending the range can alter the option payoff for a better risk control and reduced (gamma) risk.
+    \item Rebalancing: Ideally, the position would need to be rebalanced if delta is too far from target. A 1DTE option would need to be rebalanced very frequently due to it having a large gamma, while a 200DTE option may only need to be rebalanced every week or so.
+    \item Gamma: By specifying a range, the user is also specifying a maximum gamma for their position. Gamma explodes as the option approaches expiration, so deploying a position with a fixed range and constant gamma greatly reduces gamma risk.
+    \item Returns and Volatility: By prescribing a specific user-defined delta of less than 1, the position holder will likely receive reduced returns while decreasing portfolio volatility.
+    \item \textbf{How to create Long options?} To mint long Uni v3 options, the minter would first lock assets in a LP NFT token and sell it for less than the position’s intrinsic value (this is the same as buying an option for a net debit). BUT the user can claim back the underlying at the strike price at any time (ie. exercise the option). Example of this secondary LP markets, aiming to create a new option market based on LP positions are being developed by Panoptic \cite{panoptic} and Gammaswap \cite{gammaswap} on the Ethereum blockchain.
+\end{itemize}
+
+
+\newpage
+\section{Resources}
+\begin{thebibliography}{99}
+
+\item[] \textbf{Academic Papers and Whitepapers}
+
+\bibitem{bitcoin}
+Nakamoto, S. (2008). Bitcoin: A peer-to-peer electronic cash system [White paper], pp. 1--9. Available at: https://bitcoin.org/bitcoin.pdf (Accessed: August 27, 2025).
+
+\bibitem{ethereum}
+Buterin, V. (2014). Ethereum: A next-generation smart contract and decentralized application platform [White paper], pp. 1--36. Available at: https://ethereum.org/en/whitepaper/ (Accessed: August 27, 2025).
+
+\bibitem{univ2}
+Adams, H., Zinsmeister, N., \& Robinson, D. (2021). Uniswap v2 core [White paper], pp. 1--15. Available at: https://uniswap.org/whitepaper.pdf (Accessed: August 27, 2025).
+
+\bibitem{univ3}
+Adams, H., Zinsmeister, N., Salem, M., Keefer, R., \& Robinson, D. (2021). Uniswap v3 core [White paper], pp. 1--29. Available at: https://uniswap.org/whitepaper-v3.pdf (Accessed: August 27, 2025).
+
+\bibitem{univ4}
+Adams, H., Salem, M., Zinsmeister, N., Reynolds, S., Adams, A., Pote, W., Toda, M., Henshaw, A., Williams, E., \& Robinson, D. (2023). Uniswap v4 core [White paper], pp. 1--20. Available at: https://github.com/Uniswap/v4-core/blob/main/docs/whitepaper-v4.pdf (Accessed: August 27, 2025).
+
+\bibitem{heimbach2022}
+Heimbach, L., Schertenleib, E., \& Wattenhofer, R. (2022). Risks and returns of Uniswap v3 liquidity providers. In \textit{Proceedings of the ACM Conference on Advances in Financial Technologies (AFT)}, pp. 10--22.
+
+\bibitem{lipton2024}
+Lipton, A., Lucic, V., \& Sepp, A. (2024). Unified approach for hedging impermanent loss of liquidity provision. arXiv preprint arXiv:2407.05146, pp. 1--25.
+
+\bibitem{echenim2023}
+Echenim, M., Gobet, E., \& Maurice, A.-C. (2023). Thorough mathematical modelling and analysis of Uniswap v3. Preprint HAL-04214315, pp. 1--30.
+
+\bibitem{loesch2021}
+Loesch, S., Hindman, N., Richardson, M., \& Welch, N. (2021).
+Impermanent Loss in Uniswap v3. arXiv preprint arXiv:2111.09192.
+
+\bibitem{clark2020}
+Clark, J. (2020).
+The replicating portfolio of a constant product market.[working paper] Available at: https://ssrn.com/abstract=3550601 (Accessed: August 27, 2025).
+
+\bibitem{Sepp2024}
+Sepp, A., \& Rakhmonov, P. (2024). Log-normal stochastic volatility model with quadratic drift. \textit{International Journal of Theoretical and Applied Finance}, pp. 1--28. DOI: 10.1142/S0219024924500031.
+
+\bibitem{Fukasawa2022}
+Fukasawa, M., Maire, B., \& Wunsch, M. (2022). Weighted variance swaps hedge against impermanent loss. arXiv preprint arXiv:2205.01107, pp. 1--20 (Published in \textit{Quantitative Finance}, 2023).
+
+\bibitem{danos2024}
+Danos, V., Watson, L. M., El Khalloufi, H., \& Valencia, S. (2024). On-chain optimal aggregation of Uniswap v3 clones. Preprint HAL-04800479, pp. 1--25.
+
+\bibitem{evans2020}
+Evans, A. (2020). Liquidity provider returns in geometric mean markets. arXiv preprint arXiv:2006.08806, pp. 1--15.
+
+\bibitem{evans2021}
+Evans, A., Angeris, G., \& Chitra, T. (2021). Optimal fees for geometric mean market makers. arXiv preprint arXiv:2104.00446, pp. 1--12.
+
+\bibitem{wang2022}
+Wang, Y., Chen, Y., Wu, H., Zhou, L., Deng, S.
+\& Wattenhofer, R. (2022). Cyclic Arbitrage in Decentralized
+Exchanges. In Proceedings of ACM Conference (Conference’17). Available at: https://arxiv.org/pdf/2105.02784
+
+
+\bibitem{angeris2019}
+Angeris, G., Kao, H.-T., Chiang, R., Noyes, C., \& Chitra, T. (2019). An analysis of Uniswap markets. \textit{Cryptoeconomic Systems Journal}, pp. 1--20.
+
+\bibitem{sepp2024}
+Sepp, A. \& Lucic, V. (2024). Valuation and hedging of cryptocurrency inverse options. Forthcoming in Quantitative Finance, Available at SSRN: https://ssrn.com/abstract=4606748. 
+
+
+\bibitem{khakhar2022}
+Khakhar, A. \& Chen, X. (2022). Delta Hedging Liquidity Positions on Automated Market Makers. arXiv available at https://arxiv.org/abs/2208.03318.
+
+\bibitem{neuder2021}
+Neuder, M.,Rao  R., , Moroz, D. \& Parkes, D. (2021). Strategic
+Liquidity Provision in Uniswap v3. arXiv preprint arXiv:2106.12033.
+
+\bibitem{angeris2022}
+Angeris, G., Chitra, T., Evans, A., \& Lorig, M. (2022). Short communication: A primer on perpetuals. \textit{SIAM Journal on Financial Mathematics}, pp. 1--10. DOI: 10.1137/22M1520931.
+
+\bibitem{alexander2023}
+Alexander, C., Chen, D., \& Imeraj, A. (2023). Crypto quanto and inverse options. \textit{Mathematical Finance}, 33(4), pp. 1005--1043.
+
+\bibitem{lehar2024}
+Lehar, A., \& Parlour, C. A. (2024). Decentralized exchange: The Uniswap automated market maker. \textit{Journal of Finance}, forthcoming, pp. 1--35. Available at: https://ssrn.com/abstract=3905316 (Accessed: August 27, 2025).
+
+\bibitem{park2023}
+Park, A. (2023). The conceptual flaws of decentralized automated market making. \textit{Management Science}, 69(11), pp. 6731--6751. DOI: 10.1287/mnsc.2021.02802.
+
+\bibitem{liptontreccani2021}
+Lipton, A., \& Treccani, A. (2021). Distributed ledgers: Mathematics, technology, and economics [Book], pp. 10--40. World Scientific, Singapore.
+
+\bibitem{ng1971}
+NG, E. W., Geller, M. (1971). A Table of Integrals of the Error Function. JOURNAL OF RESEARCH of the Notional Bureau of Standards- B. Mathematical Sciences Vol. 75B, Nos. 3 and 4, July-December 1971.
+
+\bibitem{panoptic}
+Lambert, G., Kristensen, J. (2023). Panoptic: the perpetual, oracle-free options protocol. [white paper] Available at: https://paper.panoptic.xyz (Accessed: August 27, 2025).
+
+\bibitem{li2023}
+Li, T., Naik, S., Papanicolaou, A., \& Schoenleber, L. (2023). Yield farming for liquidity provision [Working paper], pp. 1--30. Available at: https://ssrn.com/abstract=4422213 (Accessed: August 27, 2025).
+
+\bibitem{li2024}
+Li, T., Naik, S., Papanicolaou, A., \& Schoenleber, L. (2024). Implied impermanent loss: A cross-sectional analysis of decentralized liquidity pools [Working paper], pp. 1--35. Available at: https://ssrn.com/abstract=4811111 (Accessed: August 27, 2025).
+
+
+
+\newpage
+\item[] \textbf{Websites and Blogs}
+
+\bibitem{ftx_collapse}
+Wikipedia contributors. (2025). Bankruptcy of FTX. In \textit{Wikipedia, The Free Encyclopedia}. Available at: https://en.wikipedia.org/wiki/Bankruptcy\_of\_FTX (Accessed: August 27, 2025).
+
+\bibitem{pintail2021}
+Pintail. (2021, May 27). Uniswap: A good deal for liquidity providers? \textit{Medium}. Available at: https://pintail.medium.com/uniswap-a-good-deal-for-liquidity-providers-104c0b6816f2 (Accessed: August 27, 2025).
+
+\bibitem{lambert2021_optimal_liquidity}
+Lambert, G. (2021, August 4). A guide for choosing optimal Uniswap v3 LP positions, part 1. \textit{Medium}. Available at: https://lambert-guillaume.medium.com/a-guide-for-choosing-optimal-uniswap-v3-lp-positions-part-1-842b470d2261 (Accessed: August 27, 2025).
+
+\bibitem{lambert2021_pricing_lp}
+Lambert, G. (2021, October 17). Pricing Uniswap v3 LP positions: Towards a new options paradigm? \textit{Medium}. Available at: https://lambert-guillaume.medium.com/pricing-uniswap-v3-lp-positions-towards-a-new-options-paradigm-dce3e3b50125 (Accessed: August 27, 2025).
+
+\bibitem{tienshaoku}
+Tienshaoku (2021). Uniswap v3 Maths Explained: Capital Efficiency. \textit{Medium}. Available at: https://tienshaoku.medium.com/uniswap-v3-maths-explained-capital-efficiency-86257c44405a (Accessed: August 27, 2025).
+
+\bibitem{gammaswap}
+Gammaswap Docs (2023). Available at:  https://docs.gammaswap.com (Accessed: August 27, 2025).
+
+\end{thebibliography}
+\end{document}

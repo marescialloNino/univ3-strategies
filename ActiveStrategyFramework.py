@@ -295,9 +295,9 @@ def plot_strategy(data_strategy, y_axis_label, base_color='#ff0000', flip_price_
     
     # Base position filled area
     ax.fill_between(
-        data_strategy_here['time_pd'], 
-        data_strategy_here['base_range_lower'],
-        data_strategy_here['base_range_upper'],
+        data_strategy_here['time_pd'].to_numpy(), 
+        data_strategy_here['base_range_lower'].to_numpy(),
+        data_strategy_here['base_range_upper'].to_numpy(),
         alpha=0.3,
         color=base_color,
         label='Base Position'
@@ -305,30 +305,30 @@ def plot_strategy(data_strategy, y_axis_label, base_color='#ff0000', flip_price_
     
     # Base position bounds
     ax.plot(
-        data_strategy_here['time_pd'], 
-        data_strategy_here['base_range_lower'],
+        data_strategy_here['time_pd'].to_numpy(),
+        data_strategy_here['base_range_lower'].to_numpy(),
         color=base_color,
         linewidth=1
     )
     ax.plot(
-        data_strategy_here['time_pd'], 
-        data_strategy_here['base_range_upper'],
+        data_strategy_here['time_pd'].to_numpy(),
+        data_strategy_here['base_range_upper'].to_numpy(),
         color=base_color,
         linewidth=1
     )
     
     # Reset range bounds
     ax.plot(
-        data_strategy_here['time_pd'], 
-        data_strategy_here['reset_range_lower'],
+        data_strategy_here['time_pd'].to_numpy(), 
+        data_strategy_here['reset_range_lower'].to_numpy(),
         color='black',
         linewidth=2,
         linestyle='--',
         label='Strategy Reset Bound'
     )
     ax.plot(
-        data_strategy_here['time_pd'], 
-        data_strategy_here['reset_range_upper'],
+        data_strategy_here['time_pd'].to_numpy(), 
+        data_strategy_here['reset_range_upper'].to_numpy(),
         color='black',
         linewidth=2,
         linestyle='--'
@@ -336,8 +336,8 @@ def plot_strategy(data_strategy, y_axis_label, base_color='#ff0000', flip_price_
     
     # Price
     ax.plot(
-        data_strategy_here['time_pd'], 
-        data_strategy_here['price'],
+        data_strategy_here['time_pd'].to_numpy(), 
+        data_strategy_here['price'].to_numpy(),
         color='black',
         linewidth=2,
         label='Price'
@@ -373,20 +373,39 @@ def plot_position_value(data_strategy):
     fig, ax = plt.subplots(figsize=CHART_SIZE)
     
     ax.plot(
-        data_strategy['time_pd'], 
-        data_strategy['value_position_usd'],
+        data_strategy['time_pd'].to_numpy(), 
+        data_strategy['value_position_usd'].to_numpy(),
         color='red',
         linewidth=2,
         label='Value of LP Position'
     )
 
     ax.plot(
-        data_strategy['time_pd'], 
-        data_strategy['value_hold_usd'],
+        data_strategy['time_pd'].to_numpy(), 
+        data_strategy['value_hold_usd'].to_numpy(),
         color='blue',
         linewidth=2,
         label='Value of Holding'
     )
+
+    # Optional: plot hedge value and combined (LP + hedge) if available
+    if 'hedge_value_usd' in data_strategy.columns:
+        ax.plot(
+            data_strategy['time_pd'].to_numpy(),
+            data_strategy['hedge_value_usd'].to_numpy(),
+            color='purple',
+            linewidth=1.5,
+            linestyle='--',
+            label='Hedge Value (short)'
+        )
+    if 'value_position_hedged_usd' in data_strategy.columns:
+        ax.plot(
+            data_strategy['time_pd'].to_numpy(),
+            data_strategy['value_position_hedged_usd'].to_numpy(),
+            color='magenta',
+            linewidth=2,
+            label='LP + Hedge Value'
+        )
 
     # Formatting
     ax.set_title('LP Position vs. Holding', fontsize=14)
@@ -424,32 +443,32 @@ def plot_position_return_decomposition(data_strategy):
     fig, ax = plt.subplots(figsize=CHART_SIZE)
     
     ax.plot(
-        data_strategy['time_pd'], 
-        data_strategy['cum_fees_usd'] / INITIAL_POSITION_VALUE,
+        data_strategy['time_pd'].to_numpy(), 
+        (data_strategy['cum_fees_usd'] / INITIAL_POSITION_VALUE).to_numpy(),
         color='blue',
         linewidth=2,
         label='Accumulated Fees'
     )
 
     ax.plot(
-        data_strategy['time_pd'], 
-        (data_strategy['value_hold_usd'] - data_strategy['value_position_usd']) / INITIAL_POSITION_VALUE,
+        data_strategy['time_pd'].to_numpy(), 
+        ((data_strategy['value_hold_usd'] - data_strategy['value_position_usd']) / INITIAL_POSITION_VALUE).to_numpy(),
         color='black',
         linewidth=2,
         label='Value Hold - Position'
     )
     
     ax.plot(
-        data_strategy['time_pd'], 
-        (data_strategy['value_hold_usd'] / INITIAL_POSITION_VALUE) - 1,
+        data_strategy['time_pd'].to_numpy(), 
+        ((data_strategy['value_hold_usd'] / INITIAL_POSITION_VALUE) - 1).to_numpy(),
         color='green',
         linewidth=2,
         label='Value Hold'
     )
 
     ax.plot(
-        data_strategy['time_pd'], 
-        (data_strategy['value_position_usd'] / INITIAL_POSITION_VALUE) - 1,
+        data_strategy['time_pd'].to_numpy(), 
+        ((data_strategy['value_position_usd'] / INITIAL_POSITION_VALUE) - 1).to_numpy(),
         color='#ff0000',
         linewidth=2,
         label='Net Position Value'
@@ -474,3 +493,230 @@ def plot_position_return_decomposition(data_strategy):
     plt.show()
     
     return fig
+
+
+def plot_pnl_unhedged_vs_hedged(data_strategy):
+    CHART_SIZE = (10, 4)
+
+    required = ['time_pd', 'value_position_usd']
+    if not all(col in data_strategy.columns for col in required):
+        print("Error: Missing required columns in data_strategy")
+        return None
+
+    if 'total_hedged_value_usd_mtm' not in data_strategy.columns and 'value_position_hedged_usd_mtm' not in data_strategy.columns:
+        print("Error: Hedged value columns not found. Run hedging first.")
+        return None
+
+    init = float(data_strategy.iloc[0]['value_position_usd'])
+    unhedged_pnl = data_strategy['value_position_usd'] - init
+    if 'total_hedged_value_usd_mtm' in data_strategy.columns:
+        hedged_series = data_strategy['total_hedged_value_usd_mtm']
+    else:
+        hedged_series = data_strategy['value_position_hedged_usd_mtm']
+    hedged_pnl = hedged_series - init
+
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    ax.plot(data_strategy['time_pd'].to_numpy(), unhedged_pnl.to_numpy(), color='red', linewidth=2, label='Unhedged PnL')
+    ax.plot(data_strategy['time_pd'].to_numpy(), hedged_pnl.to_numpy(), color='purple', linewidth=2, label='Hedged PnL (MTM)')
+
+    ax.set_title('PnL: Unhedged vs Hedged', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('PnL (USD)', fontsize=12)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig
+
+
+def plot_hedge_pnl_components(data_strategy):
+    CHART_SIZE = (10, 4)
+
+    required = ['time_pd', 'hedge_realized_pnl_total_usd', 'hedge_unrealized_pnl_total_usd']
+    if not all(col in data_strategy.columns for col in required):
+        print("Error: Missing required hedge PnL columns in data_strategy")
+        return None
+
+    df = data_strategy.copy()
+    df['hedge_total_pnl_usd'] = (
+        df['hedge_realized_pnl_total_usd'].astype(float).fillna(0.0)
+        + df['hedge_unrealized_pnl_total_usd'].astype(float).fillna(0.0)
+    )
+
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    ax.plot(df['time_pd'].to_numpy(), df['hedge_realized_pnl_total_usd'].to_numpy(), color='teal', linewidth=2, label='Hedge Realized PnL')
+    ax.plot(df['time_pd'].to_numpy(), df['hedge_unrealized_pnl_total_usd'].to_numpy(), color='orange', linewidth=2, label='Hedge Unrealized PnL (MTM)')
+    ax.plot(df['time_pd'].to_numpy(), df['hedge_total_pnl_usd'].to_numpy(), color='purple', linewidth=2, linestyle='--', label='Hedge Total PnL')
+
+    ax.set_title('Hedge PnL Components', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('PnL (USD)', fontsize=12)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig
+
+
+def compute_hedge_series(data_strategy: pd.DataFrame,
+                         futures_price_0_usd: pd.Series | pd.DataFrame | None,
+                         futures_price_1_usd: pd.Series | pd.DataFrame | None,
+                         adjust_on_reset: bool = True) -> pd.DataFrame:
+    """Augment data with hedge accounting (value, realized/unrealized PnL) and combined value.
+
+    - Shorts token0 and token1 futures to hedge LP token exposures.
+    - Hedge quantity is adjusted on the first row and, if adjust_on_reset=True, at each reset_point.
+    - Realized PnL is booked when reducing short quantity; adding increases weighted avg entry.
+    - Unrealized PnL = (avg_entry - current_price) * current_qty for short positions.
+
+    Expects data_strategy to contain at least:
+    - 'time' and 'time_pd' (datetime), 'token_0_total', 'token_1_total', 'value_position_usd'.
+
+    futures_price_* can be Series or DataFrame with a single column; index must be datetime (UTC preferred).
+    """
+    if data_strategy is None or len(data_strategy) == 0:
+        return data_strategy
+
+    df = data_strategy.copy()
+
+    # Ensure time_pd exists and is index for alignment
+    if 'time_pd' not in df.columns:
+        df['time_pd'] = pd.to_datetime(df['time'], utc=True, errors='coerce')
+    df = df.sort_values('time_pd')
+    df_indexed = df.set_index('time_pd')
+
+    # Prepare futures price series and merge (asof)
+    def _to_series(x):
+        if x is None:
+            return None
+        if isinstance(x, pd.DataFrame):
+            if x.shape[1] == 1:
+                s = x.iloc[:, 0]
+            elif 'close' in x.columns:
+                s = x['close']
+            else:
+                s = x.iloc[:, 0]
+        else:
+            s = x
+        s = s.sort_index()
+        s.index = pd.to_datetime(s.index, utc=True, errors='coerce')
+        return s.dropna()
+
+    s0 = _to_series(futures_price_0_usd)
+    s1 = _to_series(futures_price_1_usd)
+
+    # Build a small frame for asof merge
+    merge_df = df_indexed[['time']].copy()
+    if s0 is not None:
+        merge_df = pd.merge_asof(merge_df.reset_index(), s0.reset_index().rename(columns={s0.name if s0.name else s0.reset_index().columns[1]: 'fut_0_usd'}),
+                                 left_on='time_pd', right_on=s0.reset_index().columns[0], direction='backward').set_index('time_pd')
+    else:
+        merge_df['fut_0_usd'] = np.nan
+    if s1 is not None:
+        tmp = pd.merge_asof(df_indexed[['time']].reset_index(), s1.reset_index().rename(columns={s1.name if s1.name else s1.reset_index().columns[1]: 'fut_1_usd'}),
+                             left_on='time_pd', right_on=s1.reset_index().columns[0], direction='backward').set_index('time_pd')
+        merge_df['fut_1_usd'] = tmp['fut_1_usd']
+    else:
+        merge_df['fut_1_usd'] = np.nan
+
+    # Forward-fill prices to ensure continuity
+    merge_df[['fut_0_usd', 'fut_1_usd']] = merge_df[['fut_0_usd', 'fut_1_usd']].ffill()
+
+    # Attach prices back to main df
+    df_indexed['fut_0_usd'] = merge_df['fut_0_usd']
+    df_indexed['fut_1_usd'] = merge_df['fut_1_usd']
+
+    # Initialize tracking columns
+    for col in [
+        'hedge_qty_0', 'hedge_qty_1',
+        'hedge_avg_entry_0_usd', 'hedge_avg_entry_1_usd',
+        'hedge_realized_pnl_0_usd', 'hedge_realized_pnl_1_usd',
+        'hedge_unrealized_pnl_0_usd', 'hedge_unrealized_pnl_1_usd',
+        'hedge_value_usd', 'value_position_hedged_usd',
+        'hedge_realized_pnl_total_usd', 'hedge_unrealized_pnl_total_usd'
+    ]:
+        df_indexed[col] = 0.0
+
+    qty0 = 0.0
+    qty1 = 0.0
+    avg0 = 0.0
+    avg1 = 0.0
+    realized0 = 0.0
+    realized1 = 0.0
+
+    for t, row in df_indexed.iterrows():
+        price0 = float(row['fut_0_usd']) if not pd.isna(row['fut_0_usd']) else np.nan
+        price1 = float(row['fut_1_usd']) if not pd.isna(row['fut_1_usd']) else np.nan
+
+        # Target hedge quantities equal to LP token totals (short these amounts)
+        target0 = float(row['token_0_total']) if 'token_0_total' in df_indexed.columns else 0.0
+        target1 = float(row['token_1_total']) if 'token_1_total' in df_indexed.columns else 0.0
+
+        do_adjust = (qty0 == 0.0 and qty1 == 0.0) or (adjust_on_reset and bool(row.get('reset_point', False)))
+
+        if do_adjust:
+            # Token0 adjustments
+            if not np.isnan(price0):
+                if target0 > qty0:
+                    add0 = target0 - qty0
+                    avg0 = (qty0 * avg0 + add0 * price0) / (qty0 + add0) if (qty0 + add0) > 0 else 0.0
+                    qty0 = target0
+                elif target0 < qty0:
+                    close0 = qty0 - target0
+                    realized0 += (avg0 - price0) * close0
+                    qty0 = target0
+                    # avg0 unchanged for remaining
+
+            # Token1 adjustments
+            if not np.isnan(price1):
+                if target1 > qty1:
+                    add1 = target1 - qty1
+                    avg1 = (qty1 * avg1 + add1 * price1) / (qty1 + add1) if (qty1 + add1) > 0 else 0.0
+                    qty1 = target1
+                elif target1 < qty1:
+                    close1 = qty1 - target1
+                    realized1 += (avg1 - price1) * close1
+                    qty1 = target1
+
+        # Unrealized PnL at current prices (short)
+        unreal0 = (avg0 - price0) * qty0 if not np.isnan(price0) else 0.0
+        unreal1 = (avg1 - price1) * qty1 if not np.isnan(price1) else 0.0
+
+        # Mark-to-market hedge value (short -> negative value)
+        hedge_value = 0.0
+        if not np.isnan(price0):
+            hedge_value += -qty0 * price0
+        if not np.isnan(price1):
+            hedge_value += -qty1 * price1
+
+        df_indexed.at[t, 'hedge_qty_0'] = qty0
+        df_indexed.at[t, 'hedge_qty_1'] = qty1
+        df_indexed.at[t, 'hedge_avg_entry_0_usd'] = avg0
+        df_indexed.at[t, 'hedge_avg_entry_1_usd'] = avg1
+        df_indexed.at[t, 'hedge_realized_pnl_0_usd'] = realized0
+        df_indexed.at[t, 'hedge_realized_pnl_1_usd'] = realized1
+        df_indexed.at[t, 'hedge_unrealized_pnl_0_usd'] = unreal0
+        df_indexed.at[t, 'hedge_unrealized_pnl_1_usd'] = unreal1
+        df_indexed.at[t, 'hedge_value_usd'] = hedge_value
+
+    # Totals and combined values
+    df_indexed['hedge_realized_pnl_total_usd'] = df_indexed['hedge_realized_pnl_0_usd'] + df_indexed['hedge_realized_pnl_1_usd']
+    df_indexed['hedge_unrealized_pnl_total_usd'] = df_indexed['hedge_unrealized_pnl_0_usd'] + df_indexed['hedge_unrealized_pnl_1_usd']
+    if 'value_position_usd' in df_indexed.columns:
+        df_indexed['value_position_hedged_usd'] = df_indexed['value_position_usd'] + df_indexed['hedge_value_usd']
+
+    # Restore shape
+    out = df_indexed.reset_index()
+    return out
