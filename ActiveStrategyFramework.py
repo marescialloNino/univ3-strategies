@@ -263,14 +263,47 @@ def analyze_strategy(data_usd,frequency = 'M'):
                         'sharpe_ratio'         : float(net_apr / (((data_usd['value_position_usd'].pct_change().var())**(0.5)) * ((annualization_factor)**(0.5)))),
                         'impermanent_loss'     : ((strategy_last_obs['value_position_usd'] - strategy_last_obs['value_hold_usd']) / strategy_last_obs['value_hold_usd'])[0],
                         'mean_base_position'   : (data_usd['base_position_value_in_token_0']/ \
-                                                  (data_usd['base_position_value_in_token_0']+data_usd['limit_position_value_in_token_0']+data_usd['value_left_over_in_token_0'])).mean(),        
+                                                  (data_usd['base_position_value_in_token_0']+data_usd['limit_position_value_in_token_0']+data_usd['value_left_over_in_token_0'])).mean(),        \
                         'median_base_position' : (data_usd['base_position_value_in_token_0']/ \
                                                   (data_usd['base_position_value_in_token_0']+data_usd['limit_position_value_in_token_0']+data_usd['value_left_over_in_token_0'])).median(),
                         'mean_base_width'      : ((data_usd['base_range_upper']-data_usd['base_range_lower'])/data_usd['price_at_reset']).mean(),
-                        'median_base_width'    : ((data_usd['base_range_upper']-data_usd['base_range_lower'])/data_usd['price_at_reset']).median(),        
+                        'median_base_width'    : ((data_usd['base_range_upper']-data_usd['base_range_lower'])/data_usd['price_at_reset']).median(),        \
                         'final_value'          : data_usd['value_position_usd'].iloc[-1]
                     }
-    
+
+    # Hedged metrics if hedging columns exist
+    if 'value_position_usd' in data_usd.columns:
+        has_realized = 'hedge_realized_pnl_total_usd' in data_usd.columns
+        has_unreal   = 'hedge_unrealized_pnl_total_usd' in data_usd.columns
+        if has_realized or has_unreal:
+            realized = data_usd['hedge_realized_pnl_total_usd'].astype(float) if has_realized else 0.0
+            unreal   = data_usd['hedge_unrealized_pnl_total_usd'].astype(float) if has_unreal else 0.0
+            hedge_total_pnl = realized + unreal
+            # LP PnL series vs initial
+            lp_pnl_series = data_usd['value_position_usd'].astype(float) - float(initial_position_value)
+            # Combined value and PnL
+            combined_value = data_usd['value_position_usd'].astype(float) + hedge_total_pnl
+            final_lp_pnl   = float(lp_pnl_series.iloc[-1])
+            final_hedge_pnl= float(hedge_total_pnl.iloc[-1]) if hasattr(hedge_total_pnl, 'iloc') else float(hedge_total_pnl)
+            final_combined_value = float(combined_value.iloc[-1])
+            final_combined_pnl   = final_lp_pnl + final_hedge_pnl
+
+            # Per user: net_return_hedged = (LP PnL + Hedge PnL)/initial LP value
+            net_return_hedged = float(final_combined_pnl / initial_position_value)
+            net_apr_hedged    = float(net_return_hedged * 365 / days_strategy)
+            vol_hedged        = ((combined_value.pct_change().var())**0.5) * ((annualization_factor)**0.5)
+            sharpe_hedged     = float(net_apr_hedged / vol_hedged) if vol_hedged not in [0.0, np.nan] else np.nan
+            max_dd_hedged     = ( combined_value.max() - combined_value.min() ) / max(combined_value.max(), 1e-12)
+
+            summary_strat.update({
+                'net_apr_hedged'     : net_apr_hedged,
+                'net_return_hedged'  : net_return_hedged,
+                'volatility_hedged'  : vol_hedged,
+                'sharpe_ratio_hedged': sharpe_hedged,
+                'max_drawdown_hedged': max_dd_hedged,
+                'final_value_hedged' : final_combined_value
+            })
+
     return summary_strat
 
 
@@ -534,6 +567,71 @@ def plot_pnl_unhedged_vs_hedged(data_strategy):
 
     return fig
 
+
+def plot_pnl_analysis(data_strategy):
+    CHART_SIZE = (12, 4)
+
+    # Requirements
+    required_base = ['time_pd', 'value_position_usd', 'value_hold_usd']
+    if not all(col in data_strategy.columns for col in required_base):
+        print("Error: Missing required columns in data_strategy")
+        return None
+
+    # Hedged combined value column (any of these)
+    hedged_cols = [
+        'total_hedged_value_usd_mtm',
+        'value_position_hedged_usd_mtm',
+        'value_position_hedged_usd'
+    ]
+    hedged_col = next((c for c in hedged_cols if c in data_strategy.columns), None)
+    if hedged_col is None:
+        print("Error: Hedged value columns not found. Run hedging first.")
+        return None
+
+    df = data_strategy.copy()
+    df = df.sort_values('time_pd')
+
+    init = float(df.iloc[0]['value_position_usd'])
+
+    # Base PnLs
+    lp_pnl = df['value_position_usd'].astype(float) - init
+    hold_pnl = df['value_hold_usd'].astype(float) - init
+
+    # Hedge total PnL (prefer explicit realized+unrealized; fallback diff)
+    if 'hedge_realized_pnl_total_usd' in df.columns and 'hedge_unrealized_pnl_total_usd' in df.columns:
+        hedge_total_pnl = (df['hedge_realized_pnl_total_usd'].astype(float)
+                           + df['hedge_unrealized_pnl_total_usd'].astype(float))
+    else:
+        hedge_total_pnl = (df[hedged_col].astype(float) - df['value_position_usd'].astype(float))
+
+    # Collected fees
+    fees = df['cum_fees_usd'].astype(float) if 'cum_fees_usd' in df.columns else None
+
+    # Combined PnL = LP PnL + Hedge Total PnL
+    combined_pnl = lp_pnl + hedge_total_pnl
+
+    fig, ax = plt.subplots(figsize=CHART_SIZE)
+    ax.plot(df['time_pd'].to_numpy(), lp_pnl.to_numpy(), color='red', linewidth=2, label='LP PnL')
+    ax.plot(df['time_pd'].to_numpy(), hold_pnl.to_numpy(), color='blue', linewidth=2, label='Hold PnL')
+    ax.plot(df['time_pd'].to_numpy(), hedge_total_pnl.to_numpy(), color='green', linewidth=2, label='Hedge Total PnL')
+    ax.plot(df['time_pd'].to_numpy(), combined_pnl.to_numpy(), color='purple', linewidth=2, label='Combined PnL (LP + Hedge)')
+    if fees is not None:
+        ax.plot(df['time_pd'].to_numpy(), fees.to_numpy(), color='orange', linewidth=1.8, linestyle='--', label='Collected Fees (USD)')
+
+    ax.set_title('PnL Analysis: LP vs. Hold vs. Hedge vs. Combined', fontsize=14)
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel('PnL (USD)', fontsize=12)
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    ax.xaxis.set_major_locator(mdates.MonthLocator())
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig
 
 def plot_hedge_pnl_components(data_strategy):
     CHART_SIZE = (10, 4)
